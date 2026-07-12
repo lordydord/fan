@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="fan is a native macOS menu bar utility for live thermal monitoring and deliberate fan control.">
+  <meta name="theme-color" content="#121312">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="fan for macOS">
+  <meta property="og:description" content="Cool under pressure with live Mac thermals and deliberate fan control.">
+  <meta property="og:image" content="https://lordydord.github.io/fan/assets/readme-hero.png">
+  <meta property="og:url" content="https://lordydord.github.io/fan/">
+  <meta name="twitter:card" content="summary_large_image">
+  <title>fan for macOS</title>
+  <link rel="icon" type="image/png" href="assets/logo.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <nav class="nav shell" aria-label="Primary navigation">
+      <a class="wordmark" href="#top" aria-label="fan home">
+        <span class="wordmark-mark" aria-hidden="true">f</span>
+        <span>fan</span>
+      </a>
+      <div class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#safety">Safety</a>
+        <a href="https://github.com/lordydord/fan">Source</a>
+      </div>
+      <a class="nav-download" href="https://github.com/lordydord/fan/releases/latest">Download</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero shell" id="top">
+      <div class="hero-copy reveal">
+        <p class="eyebrow">fan 1.0 for macOS</p>
+        <h1>Cool under<br>pressure.</h1>
+        <p class="hero-intro">Live thermals, sensible cooling profiles, and precise fan control from one native menu bar utility.</p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="https://github.com/lordydord/fan/releases/latest">Download fan 1.0</a>
+          <a class="button button-secondary" href="#install">Installation guide</a>
+        </div>
+        <p class="compatibility">macOS 26.1+ &nbsp; Apple Silicon &nbsp; MIT licensed</p>
+      </div>
+
+      <div class="hero-visual reveal" aria-label="fan application preview">
+        <img class="airflow-art" src="assets/art/thermal-airflow.png" alt="Abstract metallic fan and amber airflow lines">
+        <div class="app-shot">
+          <div class="app-shot-topbar" aria-hidden="true">
+            <span></span><span></span><span></span>
+            <strong>fan</strong>
+          </div>
+          <div class="app-shot-viewport">
+            <img src="assets/screenshots/fan-dashboard-full.png" alt="fan dashboard showing temperature, RPM, profiles, and Smart controls">
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="proof shell reveal" aria-label="Product principles">
+      <div><strong>Native SwiftUI</strong><span>Fast, compact, and built for macOS.</span></div>
+      <div><strong>Local only</strong><span>No account, analytics, or telemetry upload.</span></div>
+      <div><strong>Reversible control</strong><span>Return cooling decisions to macOS at any time.</span></div>
+    </section>
+
+    <section class="profiles section shell" id="features">
+      <div class="section-heading reveal">
+        <p class="eyebrow">Cooling profiles</p>
+        <h2>Pick the intent, not a spreadsheet of fan curves.</h2>
+        <p>Move from macOS defaults to quieter, balanced, performance, or maximum cooling with one clear choice.</p>
+      </div>
+
+      <div class="profile-rail reveal" role="list" aria-label="fan cooling profiles">
+        <article role="listitem"><span>System</span><strong>macOS decides</strong><p>Hand control back to the operating system immediately.</p></article>
+        <article role="listitem"><span>Quiet</span><strong>Lower noise</strong><p>Delay stronger cooling until the Mac genuinely needs it.</p></article>
+        <article class="profile-featured" role="listitem"><span>Balanced</span><strong>Everyday cooling</strong><p>A measured thermal response for normal creative and technical work.</p></article>
+        <article role="listitem"><span>Performance</span><strong>Earlier response</strong><p>Bring the fans in sooner for sustained workloads.</p></article>
+        <article role="listitem"><span>Max</span><strong>Full speed</strong><p>Apply the available hardware maximum to every detected fan.</p></article>
+      </div>
+    </section>
+
+    <section class="telemetry section shell">
+      <div class="telemetry-visual reveal">
+        <div class="context-frame">
+          <img src="assets/screenshots/fan-menubar-context.png" alt="fan temperature and fan-speed readouts in the macOS menu bar">
+        </div>
+      </div>
+      <div class="telemetry-copy reveal">
+        <h2>Thermal context without opening another dashboard.</h2>
+        <p>Keep temperature, fan percentage, or power draw in the menu bar. Open fan when you need the full picture.</p>
+        <dl class="metric-list">
+          <div><dt>Temperature</dt><dd>Live CPU and available GPU sensors</dd></div>
+          <div><dt>Cooling</dt><dd>Current RPM, target behaviour, and fan count</dd></div>
+          <div><dt>Power</dt><dd>Battery power draw when macOS exposes it</dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <section class="control section shell">
+      <div class="control-copy reveal">
+        <h2>Automatic when you want it. Exact when you need it.</h2>
+      </div>
+      <div class="control-grid">
+        <article class="smart-control reveal">
+          <div class="control-label"><span>Smart control</span><strong>Temperature aware</strong></div>
+          <p>Choose when extra cooling begins and how quickly fan speed responds as heat rises.</p>
+          <div class="control-scale" aria-hidden="true"><span style="--position:48%"></span></div>
+          <div class="control-meta"><span>Cooling threshold</span><strong>50°C</strong></div>
+        </article>
+        <article class="manual-control reveal">
+          <div class="control-label"><span>Manual control</span><strong>Fixed RPM</strong></div>
+          <p>Set a precise target for long renders, exports, development builds, or a quiet workspace.</p>
+          <div class="number-lockup"><strong>3,800</strong><span>RPM</span></div>
+        </article>
+        <article class="boost-control reveal">
+          <div class="control-label"><span>10 minute boost</span><strong>Short, decisive cooling</strong></div>
+          <p>Run maximum cooling for a timed burst, then return to the previous profile automatically.</p>
+          <div class="countdown" aria-hidden="true"><i></i><span>10:00</span></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="safety section shell" id="safety">
+      <div class="safety-heading reveal">
+        <p class="eyebrow">Designed to give control back</p>
+        <h2>A fan utility should fail safely.</h2>
+        <p>The privilege boundary is narrow, values are clamped, and macOS automatic control remains one click away.</p>
+      </div>
+      <div class="safety-list reveal">
+        <div><h3>Validated commands</h3><p>The helper accepts only the small set of operations needed for fan control.</p></div>
+        <div><h3>Emergency cooling</h3><p>A configurable high-temperature guard can force every fan to its hardware maximum.</p></div>
+        <div><h3>Watchdog restoration</h3><p>If fan stops unexpectedly, the watchdog returns the fans to macOS automatic mode.</p></div>
+        <div><h3>No cloud dependency</h3><p>Readings, preferences, and diagnostics remain on the Mac unless the user exports them.</p></div>
+      </div>
+      <a class="text-link" href="https://github.com/lordydord/fan/blob/main/SECURITY.md">Read the security model</a>
+    </section>
+
+    <section class="install section shell" id="install">
+      <div class="install-copy reveal">
+        <h2>One menu bar icon. One helper approval. Done.</h2>
+        <ol>
+          <li><strong>Download</strong><span>Get the fan 1.0 DMG from GitHub Releases.</span></li>
+          <li><strong>Move</strong><span>Drag fan.app into the Applications folder.</span></li>
+          <li><strong>Approve</strong><span>Install the narrowly scoped helper once.</span></li>
+        </ol>
+      </div>
+      <div class="install-panel reveal">
+        <p>Terminal installation</p>
+        <div class="command-row">
+          <code id="install-command">curl -fsSL https://raw.githubusercontent.com/lordydord/fan/main/scripts/install.sh | bash</code>
+          <button type="button" data-copy="#install-command">Copy</button>
+        </div>
+        <a class="button button-primary" href="https://github.com/lordydord/fan/releases/latest">View release downloads</a>
+        <small>Ad-hoc signed. Right-click and choose Open on first launch if macOS asks.</small>
+      </div>
+    </section>
+
+    <section class="faq section shell" aria-labelledby="faq-title">
+      <div class="section-heading reveal">
+        <h2 id="faq-title">Straight answers.</h2>
+      </div>
+      <div class="faq-grid reveal">
+        <article><h3>Why does fan need an administrator password?</h3><p>macOS restricts writes to the System Management Controller. The password installs a narrow helper; the main app stays unprivileged.</p></article>
+        <article><h3>Does fan collect data?</h3><p>No. There is no account, advertising, analytics SDK, or telemetry upload. Diagnostics export only when you ask.</p></article>
+        <article><h3>Can I return to normal macOS cooling?</h3><p>Yes. Choose System, use Give back to macOS, or quit fan. The watchdog also restores control after an abnormal exit.</p></article>
+        <article><h3>Will every Mac expose the same sensors?</h3><p>No. SMC keys vary by model. fan shows supported readings and does not fabricate missing values.</p></article>
+      </div>
+    </section>
+
+    <section class="final-cta shell reveal">
+      <div>
+        <h2>Know what your Mac is doing with heat.</h2>
+      </div>
+      <a class="button button-primary" href="https://github.com/lordydord/fan/releases/latest">Download for macOS</a>
+    </section>
+  </main>
+
+  <footer class="footer shell">
+    <div class="wordmark"><span class="wordmark-mark" aria-hidden="true">f</span><span>fan</span></div>
+    <p>Native macOS thermal control. Local by design.</p>
+    <div>
+      <a href="privacy.html">Privacy</a>
+      <a href="https://github.com/lordydord/fan/blob/main/LICENSE">MIT License</a>
+      <a href="https://github.com/lordydord/fan">GitHub</a>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>

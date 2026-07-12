@@ -1,0 +1,9 @@
+/build/
+.build/
+release-build/
+/releases/v*/
+fan.xcodeproj/**/xcuserdata/
+*.xcuserstate
+.DS_Store
+tools/smc-write/.build/
+tools/.build/

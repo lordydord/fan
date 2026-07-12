@@ -1,0 +1,24 @@
+version: "1.0"
+project:
+  name: "fan"
+  description: "Native macOS thermal monitoring and fan control"
+  repository: "https://github.com/lordydord/fan"
+  website: "https://lordydord.github.io/fan/"
+
+documentation:
+  - file: "index.html"
+    title: "Product site"
+    audience: ["users", "evaluators"]
+    last_updated: "2026-07-12"
+  - file: "README.md"
+    title: "User and developer documentation"
+    audience: ["users", "developers", "contributors"]
+    last_updated: "2026-07-12"
+  - file: "release-notes/v1.0.0.md"
+    title: "fan 1.0 release notes"
+    audience: ["users", "maintainers"]
+    last_updated: "2026-07-12"
+  - file: "privacy.html"
+    title: "Privacy"
+    audience: ["users"]
+    last_updated: "2026-07-12"
