@@ -36,14 +36,14 @@ Fan App is a native macOS menu bar utility for reading live thermal data and tak
   <img src="docs/assets/screenshots/fan-dashboard-full.png" alt="fan menu bar dashboard showing temperature, RPM, profiles, and Smart controls" width="560">
 </p>
 
-## Install Fan App 1.1.2
+## Install Fan App 1.1.3
 
-1. Download `fan-1.1.2-macos.dmg` from the [latest release](https://github.com/lordydord/fan/releases/latest).
+1. Download `fan-1.1.3-macos.dmg` from the [latest release](https://github.com/lordydord/fan/releases/latest).
 2. Open the disk image and drag `fan.app` into Applications.
 3. Right-click `fan.app` and choose **Open** on first launch.
 4. Choose **Install helper** inside fan and enter an administrator password once.
 
-The v1.1.2 download is ad-hoc signed and built for Apple Silicon. macOS may show the standard warning for independently distributed apps.
+The v1.1.3 download is ad-hoc signed and built for Apple Silicon. macOS may show the standard warning for independently distributed apps.
 
 ### One-command install
 
@@ -56,7 +56,7 @@ The script downloads the latest GitHub release, installs the app, installs the n
 ## Requirements
 
 - macOS 26.1 or later
-- Apple Silicon for the supplied v1.1.2 binary
+- Apple Silicon for the supplied v1.1.3 binary
 - Administrator approval for fan-speed control
 - A Mac that exposes compatible SMC fan and temperature keys
 
@@ -112,11 +112,11 @@ tools/smc-helper        Narrow privileged SMC command helper
 docs                    GitHub Pages site and product documentation
 ```
 
-## Version 1.1.2
+## Version 1.1.3
 
-This release fixes the power figure so it follows the Mac's live system load even when the battery is fully charged. It retains the unified settings popover, persistent profiles, reduced-motion support, and corrected Max behavior introduced in 1.1.
+This release corrects Smart control so Maximum response means stronger cooling above the target—not permanent maximum RPM. Fans now return toward minimum speed once the Mac reaches or falls below the selected temperature.
 
-See the full [Fan App 1.1.2 release notes](docs/release-notes/v1.1.2.md).
+See the full [Fan App 1.1.3 release notes](docs/release-notes/v1.1.3.md).
 
 ## Contributing
 

@@ -15,16 +15,23 @@ public enum FanControlPolicy {
     public static func targetSpeed(temperature: Double, threshold: Double, emergency: Double,
                                    minimum: Int, maximum: Int, response: Double) -> Int {
         let ceiling = max(threshold + 10, emergency)
-        let ratio = max(0, min(1, (temperature - threshold) / (ceiling - threshold)))
-        let temperatureSpeed = Double(minimum) + Double(maximum - minimum) * ratio
+        let temperatureRatio = max(0, min(1, (temperature - threshold) / (ceiling - threshold)))
+        let clampedResponse = max(0, min(3, response))
         let midpoint = 1.5
-        let target: Double
-        if response <= midpoint {
-            target = Double(minimum) * (1 - response / midpoint) + temperatureSpeed * (response / midpoint)
+
+        let responseRatio: Double
+        if clampedResponse <= midpoint {
+            // Gentle responses follow the same temperature curve at reduced strength.
+            responseRatio = temperatureRatio * (clampedResponse / midpoint)
         } else {
-            let blend = (response - midpoint) / midpoint
-            target = temperatureSpeed * (1 - blend) + Double(maximum) * blend
+            // Strong responses rise earlier above the threshold, but never create a
+            // minimum fan-speed floor. At or below the threshold this remains zero.
+            let boost = (clampedResponse - midpoint) / midpoint
+            let exponent = 1 / (1 + 3 * boost)
+            responseRatio = pow(temperatureRatio, exponent)
         }
+
+        let target = Double(minimum) + Double(maximum - minimum) * responseRatio
         return Int(max(Double(minimum), min(Double(maximum), target)))
     }
 }

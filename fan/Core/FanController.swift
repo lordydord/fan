@@ -32,7 +32,7 @@ class FanController: ObservableObject {
     @Published var manualSpeed: Int = 2000
     @Published var autoThreshold: Double = 60.0
     @Published var autoMaxSpeed: Int = 6500
-    @Published var autoAggressiveness: Double = 1.5  // 0.0 = always min, 1.5 = temp-based, 3.0 = always max
+    @Published var autoAggressiveness: Double = 1.5  // 0.0 = minimal response, 1.5 = linear, 3.0 = strongest response above target
     @Published var isControlEnabled = false
     @Published var lastWriteSuccess = false
     @Published var statusMessage: String = ""

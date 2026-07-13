@@ -2,6 +2,16 @@
 
 This repository begins a new public release line for `fan`.
 
+## 1.1.3 - 2026-07-13
+
+### Smart cooling
+
+- Fixed Maximum response incorrectly holding fans at maximum RPM below the target temperature.
+- Made every response level return toward minimum fan speed at or below the selected target.
+- Changed stronger responses to ramp earlier and harder only after the temperature exceeds the target.
+- Preserved the separate Max profile and emergency-temperature override as true full-speed controls.
+- Added regression coverage for below-target ramp-down and relative response strength above target.
+
 ## 1.1.2 - 2026-07-12
 
 ### Power monitoring
