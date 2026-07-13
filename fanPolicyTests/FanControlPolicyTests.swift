@@ -26,6 +26,46 @@ import Testing
     #expect(maximum < 6500)
 }
 
+@Test func responseCurvesReachTheirIntendedFullSpeedTemperatures() {
+    let target = 55.0
+    let emergency = 90.0
+
+    #expect(FanControlPolicy.targetSpeed(temperature: 90, threshold: target, emergency: emergency,
+                                        minimum: 1000, maximum: 6500, response: 0.0) == 6500)
+    #expect(FanControlPolicy.targetSpeed(temperature: 85, threshold: target, emergency: emergency,
+                                        minimum: 1000, maximum: 6500, response: 1.0) == 6500)
+    #expect(FanControlPolicy.targetSpeed(temperature: 80, threshold: target, emergency: emergency,
+                                        minimum: 1000, maximum: 6500, response: 1.5) == 6500)
+    #expect(FanControlPolicy.targetSpeed(temperature: 77.5, threshold: target, emergency: emergency,
+                                        minimum: 1000, maximum: 6500, response: 2.0) == 6500)
+    #expect(FanControlPolicy.targetSpeed(temperature: 75, threshold: target, emergency: emergency,
+                                        minimum: 1000, maximum: 6500, response: 3.0) == 6500)
+}
+
+@Test func maximumResponseIsNearFullSpeedBySeventyDegrees() {
+    let speed = FanControlPolicy.targetSpeed(
+        temperature: 70, threshold: 55, emergency: 90,
+        minimum: 1000, maximum: 6500, response: 3
+    )
+
+    #expect(speed >= 6100)
+    #expect(speed < 6500)
+}
+
+@Test func responseSliderRemainsSmoothAcrossVisibleLabels() {
+    let justBelowMaximum = FanControlPolicy.targetSpeed(
+        temperature: 70, threshold: 55, emergency: 90,
+        minimum: 1000, maximum: 6500, response: 2.49
+    )
+    let justInsideMaximum = FanControlPolicy.targetSpeed(
+        temperature: 70, threshold: 55, emergency: 90,
+        minimum: 1000, maximum: 6500, response: 2.50
+    )
+
+    #expect(justInsideMaximum >= justBelowMaximum)
+    #expect(justInsideMaximum - justBelowMaximum < 100)
+}
+
 @Test func maximumPresetTargetsEveryFanAtConfiguredCeiling() {
     #expect(FanControlPolicy.maximumTargets(fanCount: 2, maximum: 6500) == [6500, 6500])
     #expect(FanControlPolicy.maximumTargets(fanCount: 1, maximum: 6500) == [6500])
