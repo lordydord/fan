@@ -51,7 +51,7 @@ class StatusBarManager: ObservableObject {
         button.image?.isTemplate = true
         button.title = "--°"
         button.imagePosition = .imageLeft
-        button.toolTip = "fan"
+        button.toolTip = "Fan App"
 
         button.action = #selector(togglePopover)
         button.target = self
@@ -172,15 +172,13 @@ class StatusBarManager: ObservableObject {
         } else if popover.isShown {
             popover.performClose(nil)
         } else {
-            installPopoverContentIfNeeded()
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            popover.contentViewController?.view.window?.makeKey()
+            showPopover()
         }
     }
 
     private func showQuickMenu(from button: NSStatusBarButton) {
         let menu = NSMenu()
-        for (index, preset) in FanPreset.allCases.enumerated() {
+        for (index, preset) in FanPreset.selectableCases.enumerated() {
             let item = NSMenuItem(title: preset == .maximum ? "Max (100%)" : preset.rawValue,
                                   action: #selector(runQuickAction(_:)), keyEquivalent: "")
             item.tag = index
@@ -188,7 +186,7 @@ class StatusBarManager: ObservableObject {
             menu.addItem(item)
         }
         menu.addItem(.separator())
-        let open = NSMenuItem(title: "Open Fan Control", action: #selector(openPopoverFromMenu), keyEquivalent: "")
+        let open = NSMenuItem(title: "Open Fan App", action: #selector(openPopoverFromMenu), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
         statusItem?.menu = menu
@@ -197,14 +195,19 @@ class StatusBarManager: ObservableObject {
     }
 
     @objc private func runQuickAction(_ sender: NSMenuItem) {
-        guard FanPreset.allCases.indices.contains(sender.tag) else { return }
-        quickActionHandler?(FanPreset.allCases[sender.tag])
+        guard FanPreset.selectableCases.indices.contains(sender.tag) else { return }
+        quickActionHandler?(FanPreset.selectableCases[sender.tag])
     }
 
     @objc private func openPopoverFromMenu() {
+        showPopover()
+    }
+
+    func showPopover() {
         guard let button = statusItem?.button, let popover else { return }
         installPopoverContentIfNeeded()
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        popover.contentViewController?.view.window?.makeKey()
     }
 
     private func installPopoverContentIfNeeded() {

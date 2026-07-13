@@ -17,9 +17,9 @@
   <img alt="Local only" src="https://img.shields.io/badge/data-local%20only-1c1c1e?style=flat-square">
 </p>
 
-# fan
+# Fan App
 
-`fan` is a native macOS menu bar utility for reading live thermal data and taking deliberate control of fan speed. It keeps the essential numbers visible, offers sensible cooling profiles, and always provides a direct route back to macOS system control.
+Fan App is a native macOS menu bar utility for reading live thermal data and taking deliberate control of fan speed. It keeps the essential numbers visible, offers sensible cooling profiles, and always provides a direct route back to macOS system control.
 
 ## The useful parts, immediately
 
@@ -36,14 +36,14 @@
   <img src="docs/assets/screenshots/fan-dashboard-full.png" alt="fan menu bar dashboard showing temperature, RPM, profiles, and Smart controls" width="560">
 </p>
 
-## Install fan 1.0
+## Install Fan App 1.1
 
-1. Download `fan-1.0.0-macos.dmg` from the [latest release](https://github.com/lordydord/fan/releases/latest).
+1. Download `fan-1.1-macos.dmg` from the [latest release](https://github.com/lordydord/fan/releases/latest).
 2. Open the disk image and drag `fan.app` into Applications.
 3. Right-click `fan.app` and choose **Open** on first launch.
 4. Choose **Install helper** inside fan and enter an administrator password once.
 
-The v1.0 download is ad-hoc signed and built for Apple Silicon. macOS may show the standard warning for independently distributed apps.
+The v1.1 download is ad-hoc signed and built for Apple Silicon. macOS may show the standard warning for independently distributed apps.
 
 ### One-command install
 
@@ -56,7 +56,7 @@ The script downloads the latest GitHub release, installs the app, installs the n
 ## Requirements
 
 - macOS 26.1 or later
-- Apple Silicon for the supplied v1.0 binary
+- Apple Silicon for the supplied v1.1 binary
 - Administrator approval for fan-speed control
 - A Mac that exposes compatible SMC fan and temperature keys
 
@@ -103,7 +103,7 @@ swift test
 ## Project map
 
 ```text
-fan/App                 App lifecycle and settings window
+fan/App                 App lifecycle and menu bar popover
 fan/Core                SMC monitoring, policies, fan control, safety
 fan/UI                  SwiftUI popover and settings interface
 fanPolicyTests          Deterministic thermal-policy tests
@@ -112,11 +112,11 @@ tools/smc-helper        Narrow privileged SMC command helper
 docs                    GitHub Pages site and product documentation
 ```
 
-## Version 1.0
+## Version 1.1
 
-This release introduces the redesigned thermal cockpit, profile-based cooling, boost mode, adaptive monitoring, per-fan commands, a crash watchdog, diagnostics export, native popover sizing, and a rebuilt settings experience.
+This release unifies settings with the main popover, introduces consistent Fan App branding and visual styling, preserves profile state, improves reduced-motion behavior, and fixes Max so every detected fan reaches the configured ceiling.
 
-See the full [fan 1.0 release notes](docs/release-notes/v1.0.0.md).
+See the full [Fan App 1.1 release notes](docs/release-notes/v1.1.md).
 
 ## Contributing
 

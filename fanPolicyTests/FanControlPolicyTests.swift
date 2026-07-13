@@ -11,6 +11,12 @@ import Testing
                                         minimum: 1000, maximum: 6000, response: 3) == 6000)
 }
 
+@Test func maximumPresetTargetsEveryFanAtConfiguredCeiling() {
+    #expect(FanControlPolicy.maximumTargets(fanCount: 2, maximum: 6500) == [6500, 6500])
+    #expect(FanControlPolicy.maximumTargets(fanCount: 1, maximum: 6500) == [6500])
+    #expect(FanControlPolicy.maximumTargets(fanCount: 0, maximum: 6500).isEmpty)
+}
+
 @Test func adaptivePollingAcceleratesWhenHot() {
     #expect(FanControlPolicy.adaptiveInterval(temperature: 45, preferred: 5) == 12)
     #expect(FanControlPolicy.adaptiveInterval(temperature: 65, preferred: 5) == 5)

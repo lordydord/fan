@@ -2,6 +2,28 @@
 
 This repository begins a new public release line for `fan`.
 
+## 1.1 - 2026-07-12
+
+### Interface
+
+- Renamed the visible product branding to Fan App.
+- Moved settings into the menu bar popover instead of opening a separate window.
+- Redesigned settings to match the dashboard's amber, material-based visual system.
+- Replaced the directional settings transition with a smooth crossfade.
+- Applied reduced-motion preferences to page, meter, and button animations.
+
+### Cooling control
+
+- Fixed Max so it commands every detected fan to the configured 6,500 RPM ceiling.
+- Added an explicit Custom profile state for manually adjusted controls.
+- Persisted the selected profile across clean app restarts.
+
+### Reliability and release
+
+- Added regression coverage for one-fan, two-fan, and zero-fan maximum targets.
+- Made release builds, downloads, and GitHub publishing version-driven.
+- Refreshed the installed app and release packaging for the Fan App 1.1 line.
+
 ## 1.0.0 - 2026-07-12
 
 ### Interface

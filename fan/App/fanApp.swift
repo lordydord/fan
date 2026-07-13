@@ -14,8 +14,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var viewModel: FanControlViewModel?
     private var cancellables = Set<AnyCancellable>()
     private var displayModeObserver: NSObjectProtocol?
-    private var settingsObserver: NSObjectProtocol?
-    private var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -42,13 +40,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 statusBarManager?.setDisplayMode(mode)
                 self?.configureBatteryMonitoring(for: mode)
             }
-        }
-
-        settingsObserver = NotificationCenter.default.addObserver(
-            forName: NSNotification.Name("OpenSettingsWindow"),
-            object: nil, queue: .main
-        ) { [weak self] _ in
-            self?.openSettingsWindow()
         }
 
         statusBarManager.setPopoverContentBuilder { [weak self] in
@@ -94,37 +85,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                     powerWatts: power)
     }
 
-    func openSettingsWindow() {
-        if let existing = settingsWindow, existing.isVisible {
-            existing.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            return
-        }
-        guard let viewModel = viewModel else { return }
-        let hostingView = NSHostingView(rootView:
-            SettingsWindowView(isOpen: .constant(true), viewModel: viewModel)
-        )
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 450, height: 620),
-            styleMask: [.titled, .closable, .miniaturizable],
-            backing: .buffered, defer: false
-        )
-        window.title = "fan Settings"
-        window.contentView = hostingView
-        window.center()
-        window.level = .floating
-        window.isReleasedWhenClosed = false
-        window.delegate = self
-        settingsWindow = window
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-    }
-
     func applicationWillTerminate(_ notification: Notification) {
         cancellables.removeAll()
         BatteryMonitor.shared.stopMonitoring()
         viewModel?.stopMonitoring()
-        [displayModeObserver, settingsObserver].compactMap { $0 }.forEach {
+        [displayModeObserver].compactMap { $0 }.forEach {
             NotificationCenter.default.removeObserver($0)
         }
     }
@@ -132,14 +97,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return false
     }
-}
 
-extension AppDelegate: NSWindowDelegate {
-    func windowWillClose(_ notification: Notification) {
-        if (notification.object as? NSWindow) === settingsWindow {
-            settingsWindow?.contentView = nil
-            settingsWindow = nil
-        }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        statusBarManager?.showPopover()
+        return false
     }
 }
 

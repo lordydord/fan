@@ -9,22 +9,35 @@ struct PopoverView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showingQuitConfirm = false
+    @State private var showingSettings = false
     @State private var installError: String?
 
     private let accent = Color(red: 0.91, green: 0.67, blue: 0.25)
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-
-            if !permissions.isHelperInstalled {
-                setupState
-            } else if !viewModel.hasAccess {
-                accessState
-            } else if viewModel.cpuTemperature == nil {
-                loadingState
+        Group {
+            if showingSettings {
+                SettingsView(viewModel: viewModel) {
+                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+                        showingSettings = false
+                    }
+                }
+                .transition(.opacity)
             } else {
-                dashboard
+                VStack(spacing: 0) {
+                    header
+
+                    if !permissions.isHelperInstalled {
+                        setupState
+                    } else if !viewModel.hasAccess {
+                        accessState
+                    } else if viewModel.cpuTemperature == nil {
+                        loadingState
+                    } else {
+                        dashboard
+                    }
+                }
+                .transition(.opacity)
             }
         }
         .frame(width: 380)
@@ -37,7 +50,7 @@ struct PopoverView: View {
         .onDisappear {
             if viewModel.statusBarDisplayMode != "power" { battery.stopMonitoring() }
         }
-        .alert("Quit fan?", isPresented: $showingQuitConfirm) {
+        .alert("Quit Fan App?", isPresented: $showingQuitConfirm) {
             Button("Cancel", role: .cancel) { }
             Button("Quit", role: .destructive) { quitApp() }
         } message: {
@@ -75,7 +88,7 @@ struct PopoverView: View {
             .frame(width: 36, height: 36)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text("fan")
+                Text("Fan App")
                     .font(.system(size: 18, weight: .bold, design: .rounded))
                     .tracking(-0.5)
                 Text(headerSubtitle)
@@ -86,8 +99,9 @@ struct PopoverView: View {
             Spacer()
 
             Button {
-                statusBarManager?.closePopover()
-                NotificationCenter.default.post(name: NSNotification.Name("OpenSettingsWindow"), object: nil)
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+                    showingSettings = true
+                }
             } label: {
                 Image(systemName: "slider.horizontal.3")
                     .frame(width: 26, height: 26)
@@ -100,7 +114,7 @@ struct PopoverView: View {
                     .frame(width: 26, height: 26)
             }
             .buttonStyle(ChromeButtonStyle())
-            .help("Quit fan")
+            .help("Quit Fan App")
         }
         .padding(.horizontal, 18)
         .padding(.top, 16)
@@ -177,7 +191,7 @@ struct PopoverView: View {
             }
 
             HStack(spacing: 7) {
-                ForEach(FanPreset.allCases) { preset in
+                ForEach(FanPreset.selectableCases) { preset in
                     PresetButton(
                         preset: preset,
                         isSelected: viewModel.activePreset == preset,
@@ -389,6 +403,7 @@ struct PopoverView: View {
         case .balanced: return "everyday cooling"
         case .performance: return "earlier response"
         case .maximum: return "full speed"
+        case .custom: return "custom settings"
         }
     }
 
@@ -414,6 +429,8 @@ private struct TemperatureDial: View {
     let temperature: Double?
     let color: Color
     let status: String
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var progress: Double {
         guard let temperature else { return 0 }
@@ -446,13 +463,15 @@ private struct TemperatureDial: View {
             }
         }
         .frame(width: 122, height: 122)
-        .animation(.easeOut(duration: 0.35), value: progress)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.35), value: progress)
     }
 }
 
 private struct FanBar: View {
     let progress: Double
     let accent: Color
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { proxy in
@@ -464,7 +483,7 @@ private struct FanBar: View {
             }
         }
         .frame(height: 5)
-        .animation(.easeOut(duration: 0.35), value: progress)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.35), value: progress)
     }
 }
 
@@ -498,6 +517,7 @@ private struct PresetButton: View {
         case .balanced: return "circle.lefthalf.filled"
         case .performance: return "bolt.fill"
         case .maximum: return "wind"
+        case .custom: return "slider.horizontal.3"
         }
     }
 
@@ -600,17 +620,21 @@ private struct StatePanel: View {
 }
 
 private struct ChromeButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .foregroundStyle(.secondary)
             .background(Color.primary.opacity(configuration.isPressed ? 0.11 : 0.055), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .scaleEffect(configuration.isPressed ? 0.96 : 1)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
 private struct AccentButtonStyle: ButtonStyle {
     let accent: Color
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -620,7 +644,7 @@ private struct AccentButtonStyle: ButtonStyle {
             .padding(.vertical, 9)
             .background(accent.opacity(configuration.isPressed ? 0.78 : 1), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 

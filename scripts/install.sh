@@ -15,7 +15,8 @@ if [[ -z "$LATEST_TAG" ]]; then
   exit 1
 fi
 
-DOWNLOAD_URL="https://github.com/$REPO/releases/download/$LATEST_TAG/fan-1.0.0-macos.zip"
+VERSION="${LATEST_TAG#v}"
+DOWNLOAD_URL="https://github.com/$REPO/releases/download/$LATEST_TAG/fan-$VERSION-macos.zip"
 printf 'Downloading %s...\n' "$LATEST_TAG"
 curl -fL "$DOWNLOAD_URL" -o "$ARCHIVE"
 

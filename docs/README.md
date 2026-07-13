@@ -10,7 +10,7 @@ fan is a native macOS menu bar utility for thermal monitoring and fan control.
 4. Open fan from the menu bar.
 5. Select Install helper and approve the administrator prompt once.
 
-The v1.0 binary requires macOS 26.1 or later and targets Apple Silicon.
+The v1.1 binary requires macOS 26.1 or later and targets Apple Silicon.
 
 ## Dashboard
 
@@ -102,7 +102,7 @@ Choose Export Diagnostics in Settings to save a local text file containing appli
 
 ### The app does not open normally
 
-The v1.0 download is ad-hoc signed. Right-click `fan.app`, choose Open, and confirm the standard macOS prompt.
+The v1.1 download is ad-hoc signed. Right-click `fan.app`, choose Open, and confirm the standard macOS prompt.
 
 ### Restore system control from Terminal
 
@@ -119,6 +119,7 @@ The Xcode project is `fan.xcodeproj` and the runnable scheme is `fan`.
 
 ## More information
 
+- [Fan App 1.1 release notes](release-notes/v1.1.md)
 - [fan 1.0 release notes](release-notes/v1.0.0.md)
 - [Security policy](../SECURITY.md)
 - [Contributing](../CONTRIBUTING.md)

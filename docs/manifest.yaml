@@ -16,6 +16,8 @@ documentation:
     last_updated: "2026-07-12"
   - file: "release-notes/v1.0.0.md"
     title: "fan 1.0 release notes"
+  - file: "release-notes/v1.1.md"
+    title: "Fan App 1.1 release notes"
     audience: ["users", "maintainers"]
     last_updated: "2026-07-12"
   - file: "privacy.html"

@@ -21,6 +21,9 @@ enum FanPreset: String, CaseIterable, Identifiable {
     case balanced = "Balanced"
     case performance = "Performance"
     case maximum = "Max"
+    case custom = "Custom"
+
+    static let selectableCases: [FanPreset] = [.system, .quiet, .balanced, .performance, .maximum]
     var id: String { rawValue }
 }
 
@@ -78,6 +81,11 @@ class FanController: ObservableObject {
     
     private func applyInitialSettings() {
         print("FanController: Applying initial settings - mode: \(mode)")
+
+        if activePreset == .system {
+            restoreAutomaticControl()
+            return
+        }
         
         switch mode {
         case .manual:
@@ -97,6 +105,11 @@ class FanController: ObservableObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
                 self?.reapplySettings()
             }
+            return
+        }
+
+        if activePreset == .system {
+            restoreAutomaticControl()
             return
         }
         
@@ -120,7 +133,7 @@ class FanController: ObservableObject {
         
         let clampedSpeed = max(minSpeed, min(maxSpeed, speed))
         manualSpeed = clampedSpeed
-        activePreset = clampedSpeed == maxSpeed ? .maximum : .balanced
+        activePreset = clampedSpeed == maxSpeed ? .maximum : .custom
         
         if isControlEnabled {
             applyFanSpeed(clampedSpeed)
@@ -129,8 +142,11 @@ class FanController: ObservableObject {
         saveSettings() // Save immediately for UI responsiveness
     }
     
-    func setMode(_ newMode: ControlMode) {
+    func setMode(_ newMode: ControlMode, preservePreset: Bool = false) {
         mode = newMode
+        if !preservePreset {
+            activePreset = newMode == .manual && manualSpeed == maxSpeed ? .maximum : .custom
+        }
         
         if newMode == .automatic {
             restoreAutomaticControl()
@@ -353,6 +369,23 @@ class FanController: ObservableObject {
         emergencyProtectionEnabled = defaults.object(forKey: "emergencyProtectionEnabled") as? Bool ?? true
         let savedEmergency = defaults.double(forKey: "emergencyTemperature")
         if savedEmergency >= 75 && savedEmergency <= 105 { emergencyTemperature = savedEmergency }
+
+        if let savedPreset = defaults.string(forKey: "activePreset"),
+           let preset = FanPreset(rawValue: savedPreset) {
+            activePreset = preset
+        } else {
+            activePreset = inferredPreset()
+        }
+    }
+
+    private func inferredPreset() -> FanPreset {
+        if mode == .manual {
+            return manualSpeed == maxSpeed ? .maximum : .custom
+        }
+        if autoThreshold == 65, autoMaxSpeed == 3600, autoAggressiveness == 0.75 { return .quiet }
+        if autoThreshold == 60, autoMaxSpeed == 5000, autoAggressiveness == 1.5 { return .balanced }
+        if autoThreshold == 50, autoMaxSpeed == maxSpeed, autoAggressiveness == 2.25 { return .performance }
+        return .custom
     }
     
     // Explicitly return control to system (SMC auto behavior) without app interference
@@ -369,12 +402,14 @@ class FanController: ObservableObject {
         defaults.set(autoThreshold, forKey: "autoThreshold")
         defaults.set(autoMaxSpeed, forKey: "autoMaxSpeed")
         defaults.set(autoAggressiveness, forKey: "autoAggressiveness")
+        defaults.set(activePreset.rawValue, forKey: "activePreset")
         defaults.set(emergencyProtectionEnabled, forKey: "emergencyProtectionEnabled")
         defaults.set(emergencyTemperature, forKey: "emergencyTemperature")
     }
     
     func setAutoThreshold(_ threshold: Double) {
         autoThreshold = max(40, min(90, threshold))
+        activePreset = .custom
         saveSettings()
         // Force immediate update in auto mode
         if mode == .automatic {
@@ -385,6 +420,7 @@ class FanController: ObservableObject {
     
     func setAutoMaxSpeed(_ speed: Int) {
         autoMaxSpeed = max(minSpeed, min(maxSpeed, speed))
+        activePreset = .custom
         saveSettings()
         // Force immediate update in auto mode
         if mode == .automatic {
@@ -395,6 +431,7 @@ class FanController: ObservableObject {
     
     func setAutoAggressiveness(_ value: Double) {
         autoAggressiveness = max(0.0, min(3.0, value))
+        activePreset = .custom
         saveSettings()
         // Force immediate update in auto mode
         if mode == .automatic {
@@ -409,13 +446,15 @@ class FanController: ObservableObject {
         case .system:
             resetToSystemControl()
         case .quiet:
-            setMode(.automatic); autoThreshold = 65; autoMaxSpeed = 3600; autoAggressiveness = 0.75
+            setMode(.automatic, preservePreset: true); autoThreshold = 65; autoMaxSpeed = 3600; autoAggressiveness = 0.75
         case .balanced:
-            setMode(.automatic); autoThreshold = 60; autoMaxSpeed = 5000; autoAggressiveness = 1.5
+            setMode(.automatic, preservePreset: true); autoThreshold = 60; autoMaxSpeed = 5000; autoAggressiveness = 1.5
         case .performance:
-            setMode(.automatic); autoThreshold = 50; autoMaxSpeed = maxSpeed; autoAggressiveness = 2.25
+            setMode(.automatic, preservePreset: true); autoThreshold = 50; autoMaxSpeed = maxSpeed; autoAggressiveness = 2.25
         case .maximum:
             stopAutoControl(); mode = .manual; manualSpeed = maxSpeed; enableManualMode(); applyMaximumSpeed()
+        case .custom:
+            return
         }
         saveSettings()
         if mode == .automatic { lastAppliedSpeed = 0; updateAutoControl() }
@@ -426,6 +465,8 @@ class FanController: ObservableObject {
         let value = max(minSpeed, min(maxSpeed, speed))
         if runSmcHelper(args: ["set", "\(fanIndex)", "\(value)"]) {
             lastAppliedSpeed = value
+            activePreset = .custom
+            saveSettings()
             startWatchdogIfNeeded(fanCount: monitor.numberOfFans)
         }
     }
@@ -433,11 +474,14 @@ class FanController: ObservableObject {
     private func applyMaximumSpeed() {
         guard let monitor = systemMonitor, monitor.numberOfFans > 0 else { return }
         var success = true
-        for index in 0..<monitor.numberOfFans {
-            let hardwareMax = monitor.fanMaxSpeeds.indices.contains(index) ? monitor.fanMaxSpeeds[index] : maxSpeed
-            if !runSmcHelper(args: ["set", "\(index)", "\(hardwareMax)"]) { success = false }
-            lastAppliedSpeed = max(lastAppliedSpeed, hardwareMax)
+        let targets = FanControlPolicy.maximumTargets(fanCount: monitor.numberOfFans, maximum: maxSpeed)
+        for (index, target) in targets.enumerated() {
+            // Use the same explicit ceiling as the manual and Performance
+            // controls. Some Macs report lower F{n}Mx values even though the
+            // accepted target and observed maximum are 6500 RPM.
+            if !runSmcHelper(args: ["set", "\(index)", "\(target)"]) { success = false }
         }
+        if success { lastAppliedSpeed = maxSpeed }
         lastWriteSuccess = success
         if success { startWatchdogIfNeeded(fanCount: monitor.numberOfFans) }
     }

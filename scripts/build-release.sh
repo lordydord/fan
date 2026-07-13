@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="${1:-1.0.0}"
+VERSION="${1:?usage: scripts/build-release.sh VERSION}"
+BUILD_NUMBER="${BUILD_NUMBER:-2}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DERIVED_DATA="$ROOT_DIR/.build/release-derived"
 OUTPUT_DIR="$ROOT_DIR/releases/v$VERSION"
@@ -20,6 +21,8 @@ xcodebuild \
   -destination "platform=macOS,arch=arm64" \
   -derivedDataPath "$DERIVED_DATA" \
   CODE_SIGNING_ALLOWED=NO \
+  MARKETING_VERSION="$VERSION" \
+  CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
   clean build
 
 ditto "$APP_SOURCE" "$APP_STAGE"
@@ -44,5 +47,11 @@ hdiutil detach "$DMG_MOUNT"
 hdiutil convert "$RW_DMG" -format UDZO -o "$OUTPUT_DIR/fan-$VERSION-macos.dmg"
 rm -rf "$RW_DMG" "$DMG_MOUNT"
 shasum -a 256 "$OUTPUT_DIR/fan-$VERSION-macos.dmg" > "$OUTPUT_DIR/fan-$VERSION-macos.dmg.sha256"
+
+# File-provider metadata can be re-applied to the staged app while the DMG is
+# assembled. Keep the local release copy independently verifiable as well.
+xattr -cr "$APP_STAGE"
+codesign --force --deep --sign - "$APP_STAGE"
+codesign --verify --deep --strict "$APP_STAGE"
 
 printf 'Release artifacts: %s\n' "$OUTPUT_DIR"

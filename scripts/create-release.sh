@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="${1:-1.0.0}"
+VERSION="${1:?usage: scripts/create-release.sh VERSION}"
 REPO="lordydord/fan"
 TAG="v$VERSION"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -24,7 +24,8 @@ done
 
 gh release create "$TAG" \
   --repo "$REPO" \
-  --title "fan $VERSION" \
+  --title "Fan App $VERSION" \
+  --latest \
   --notes-file "$NOTES" \
   "$ARTIFACT_DIR/fan-$VERSION-macos.zip" \
   "$ARTIFACT_DIR/fan-$VERSION-macos.zip.sha256" \

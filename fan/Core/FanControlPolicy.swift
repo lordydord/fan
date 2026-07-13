@@ -1,6 +1,11 @@
 import Foundation
 
 public enum FanControlPolicy {
+    public static func maximumTargets(fanCount: Int, maximum: Int) -> [Int] {
+        guard fanCount > 0 else { return [] }
+        return Array(repeating: maximum, count: fanCount)
+    }
+
     public static func adaptiveInterval(temperature: Double, preferred: Double) -> Double {
         if temperature >= 75 { return 2 }
         if temperature >= 60 { return max(5, preferred) }
