@@ -22,3 +22,23 @@ import Testing
     #expect(FanControlPolicy.adaptiveInterval(temperature: 65, preferred: 5) == 5)
     #expect(FanControlPolicy.adaptiveInterval(temperature: 80, preferred: 5) == 2)
 }
+
+@Test func systemLoadPowerWorksWhenChargedBatteryCurrentIsZero() {
+    #expect(PowerReadingPolicy.watts(
+        systemLoadMilliwatts: 21_502,
+        systemPowerInMilliwatts: 21_502,
+        batteryPowerMilliwatts: 0,
+        voltageVolts: 12.562,
+        amperageMilliamps: 0
+    ) == 21.502)
+}
+
+@Test func batteryCurrentRemainsAPowerFallback() {
+    #expect(PowerReadingPolicy.watts(
+        systemLoadMilliwatts: nil,
+        systemPowerInMilliwatts: nil,
+        batteryPowerMilliwatts: nil,
+        voltageVolts: 12.5,
+        amperageMilliamps: -1_600
+    ) == 20)
+}

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 VERSION="${1:?usage: scripts/build-release.sh VERSION}"
-BUILD_NUMBER="${BUILD_NUMBER:-2}"
+BUILD_NUMBER="${BUILD_NUMBER:-3}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DERIVED_DATA="$ROOT_DIR/.build/release-derived"
 OUTPUT_DIR="$ROOT_DIR/releases/v$VERSION"

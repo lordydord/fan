@@ -20,6 +20,9 @@ struct BatteryInfo {
     var temperature: Double? = nil  // in Celsius
     var voltage: Double? = nil  // in Volts
     var amperage: Int? = nil  // in mA (negative = discharging)
+    var systemLoadMilliwatts: Double? = nil
+    var systemPowerInMilliwatts: Double? = nil
+    var batteryPowerMilliwatts: Double? = nil
     var timeRemaining: Int? = nil  // minutes
     var designCapacity: Int? = nil  // mAh
     var maxCapacity: Int? = nil  // mAh (actual current max)
@@ -47,12 +50,16 @@ struct BatteryInfo {
         }
     }
 
-    // Power in Watts (calculated from voltage and amperage)
+    // Prefer macOS system-load telemetry. Battery current is zero when a fully
+    // charged Mac is running from AC, so voltage × amperage alone is incomplete.
     var powerWatts: Double? {
-        guard let voltage = voltage, let amp = amperage else { return nil }
-        // voltage is in V, amperage in mA
-        // Power = V * A = V * (mA/1000)
-        return abs(voltage * Double(amp) / 1000.0)
+        PowerReadingPolicy.watts(
+            systemLoadMilliwatts: systemLoadMilliwatts,
+            systemPowerInMilliwatts: systemPowerInMilliwatts,
+            batteryPowerMilliwatts: batteryPowerMilliwatts,
+            voltageVolts: voltage,
+            amperageMilliamps: amperage.map(Double.init)
+        )
     }
 }
 
@@ -186,6 +193,12 @@ class BatteryMonitor: ObservableObject {
             info.voltage = Double(voltage) / 1000.0  // Convert mV to V
         }
 
+        if let telemetry = getIORegistryProperty(service: service, key: "PowerTelemetryData") as? [String: Any] {
+            info.systemLoadMilliwatts = numericValue(telemetry["SystemLoad"])
+            info.systemPowerInMilliwatts = numericValue(telemetry["SystemPowerIn"])
+            info.batteryPowerMilliwatts = numericValue(telemetry["BatteryPower"])
+        }
+
         // Amperage - stored as unsigned 64-bit representing negative values when discharging
         // Try multiple casting approaches since IORegistry can return different types
         let amperageValue = getIORegistryProperty(service: service, key: "InstantAmperage")
@@ -231,6 +244,10 @@ class BatteryMonitor: ObservableObject {
             return nil
         }
         return value.takeRetainedValue()
+    }
+
+    private func numericValue(_ value: Any?) -> Double? {
+        (value as? NSNumber)?.doubleValue
     }
 
     deinit {

@@ -2,6 +2,15 @@
 
 This repository begins a new public release line for `fan`.
 
+## 1.1.2 - 2026-07-12
+
+### Power monitoring
+
+- Fixed power usage remaining at 0.0 W when a fully charged Mac is connected to AC power.
+- Switched the primary reading to macOS live system-load telemetry.
+- Kept voltage and battery-current calculation as a fallback for Macs without system-load telemetry.
+- Added regression coverage for AC-powered and battery-powered readings.
+
 ## 1.1 - 2026-07-12
 
 ### Interface
