@@ -9,34 +9,36 @@ import SwiftUI
 
 struct LiquidGlassModifier: ViewModifier {
     var cornerRadius: CGFloat = 16
-    var opacity: Double = 0.3
+    var tint: Color? = nil
+    var isInteractive = false
+    var shadowOpacity: Double = 0.08
     
     func body(content: Content) -> some View {
         content
-            .background {
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .fill(.ultraThinMaterial)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: cornerRadius)
-                            .stroke(
-                                LinearGradient(
-                                    colors: [
-                                        .white.opacity(0.6),
-                                        .white.opacity(0.1)
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                                lineWidth: 1
-                            )
-                    }
-                    .shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 5)
-            }
+            .glassEffect(
+                .clear
+                    .tint(tint)
+                    .interactive(false),
+                in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            )
+            .shadow(color: .black.opacity(shadowOpacity), radius: 14, x: 0, y: 8)
     }
 }
 
 extension View {
-    func liquidGlass(cornerRadius: CGFloat = 16, opacity: Double = 0.3) -> some View {
-        modifier(LiquidGlassModifier(cornerRadius: cornerRadius, opacity: opacity))
+    func liquidGlass(
+        cornerRadius: CGFloat = 16,
+        tint: Color? = nil,
+        isInteractive: Bool = false,
+        shadowOpacity: Double = 0.08
+    ) -> some View {
+        modifier(
+            LiquidGlassModifier(
+                cornerRadius: cornerRadius,
+                tint: tint,
+                isInteractive: isInteractive,
+                shadowOpacity: shadowOpacity
+            )
+        )
     }
 }

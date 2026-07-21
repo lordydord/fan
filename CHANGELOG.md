@@ -2,6 +2,15 @@
 
 This repository begins a new public release line for `fan`.
 
+## 1.1.4 - 2026-07-21
+
+### Interface
+
+- Rebuilt the dashboard and settings surfaces with native macOS Liquid Glass.
+- Added restrained amber and temperature-aware glass tinting while keeping the interface clear and readable.
+- Refined popover buttons, profile controls, metric chips, and settings sections with consistent translucent materials and borders.
+- Preserved the existing in-popover Settings and Back navigation flow.
+
 ## 1.1.3 - 2026-07-13
 
 ### Smart cooling

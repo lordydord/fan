@@ -60,14 +60,14 @@ struct PopoverView: View {
 
     private var background: some View {
         ZStack {
-            Rectangle().fill(.ultraThinMaterial)
+            Color.clear
             LinearGradient(
-                colors: [accent.opacity(0.09), .clear, Color.primary.opacity(0.025)],
+                colors: [accent.opacity(0.045), .clear, temperatureColor.opacity(0.025)],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
             Circle()
-                .fill(temperatureColor.opacity(0.08))
+                .fill(temperatureColor.opacity(0.045))
                 .frame(width: 240, height: 240)
                 .blur(radius: 48)
                 .offset(x: 145, y: -210)
@@ -78,14 +78,15 @@ struct PopoverView: View {
         HStack(spacing: 12) {
             ZStack {
                 RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .fill(accent)
+                    .fill(accent.opacity(0.16))
                 Image(systemName: "fan.fill")
                     .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(Color.black.opacity(0.82))
+                    .foregroundStyle(accent)
                     .rotationEffect(.degrees(viewModel.currentFanSpeed > 0 ? 12 : 0))
                     .animation(reduceMotion ? nil : .spring(response: 0.45), value: viewModel.currentFanSpeed)
             }
             .frame(width: 36, height: 36)
+            .glassEffect(.clear.tint(accent.opacity(0.08)), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
 
             VStack(alignment: .leading, spacing: 1) {
                 Text("Fan App")
@@ -106,14 +107,14 @@ struct PopoverView: View {
                 Image(systemName: "slider.horizontal.3")
                     .frame(width: 26, height: 26)
             }
-            .buttonStyle(ChromeButtonStyle())
+            .buttonStyle(PopoverGlassButtonStyle())
             .help("Settings")
 
             Button { showingQuitConfirm = true } label: {
                 Image(systemName: "power")
                     .frame(width: 26, height: 26)
             }
-            .buttonStyle(ChromeButtonStyle())
+            .buttonStyle(PopoverGlassButtonStyle())
             .help("Quit Fan App")
         }
         .padding(.horizontal, 18)
@@ -122,10 +123,12 @@ struct PopoverView: View {
     }
 
     private var dashboard: some View {
-        VStack(spacing: 14) {
-            hero
-            presetStrip
-            controlPanel
+        GlassEffectContainer(spacing: 14) {
+            VStack(spacing: 14) {
+                hero
+                presetStrip
+                controlPanel
+            }
         }
         .padding(.horizontal, 18)
         .padding(.bottom, 14)
@@ -167,14 +170,7 @@ struct PopoverView: View {
             }
             .padding(16)
         }
-        .background {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(Color.primary.opacity(0.055))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(0.09), lineWidth: 1)
-                }
-        }
+        .liquidGlass(cornerRadius: 24, tint: temperatureColor.opacity(0.035))
     }
 
     private var presetStrip: some View {
@@ -253,19 +249,12 @@ struct PopoverView: View {
                 Button { viewModel.applyPreset(.system) } label: {
                     Label("Give back to macOS", systemImage: "arrow.uturn.backward")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(PopoverGlassButtonStyle(cornerRadius: 9))
                 .controlSize(.large)
             }
         }
         .padding(15)
-        .background {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color.primary.opacity(0.04))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-                }
-        }
+        .liquidGlass(cornerRadius: 20, tint: accent.opacity(0.02))
     }
 
     private var manualControls: some View {
@@ -500,7 +489,7 @@ private struct MetricChip: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
-        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .glassEffect(.clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 
@@ -533,15 +522,14 @@ private struct PresetButton: View {
             .foregroundStyle(isSelected ? Color.black.opacity(0.82) : Color.primary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 9)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
             .background(
-                isSelected ? accent : Color.primary.opacity(0.055),
-                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                isSelected ? accent.opacity(0.86) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 11, style: .continuous)
             )
             .overlay {
-                if !isSelected {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-                }
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .strokeBorder(.white.opacity(isSelected ? 0.26 : 0.34), lineWidth: 0.75)
             }
         }
         .buttonStyle(.plain)
@@ -576,7 +564,7 @@ private struct CompactControl<Content: View>: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity)
-        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .glassEffect(.clear, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
@@ -595,7 +583,7 @@ private struct StatePanel: View {
                 .font(.system(size: 27, weight: .semibold))
                 .foregroundStyle(accent)
                 .frame(width: 58, height: 58)
-                .background(accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .glassEffect(.regular.tint(accent.opacity(0.18)), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             VStack(spacing: 5) {
                 Text(title).font(.system(size: 17, weight: .bold, design: .rounded))
                 Text(message)
@@ -619,18 +607,6 @@ private struct StatePanel: View {
     }
 }
 
-private struct ChromeButtonStyle: ButtonStyle {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .foregroundStyle(.secondary)
-            .background(Color.primary.opacity(configuration.isPressed ? 0.11 : 0.055), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .scaleEffect(configuration.isPressed ? 0.96 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
-    }
-}
-
 private struct AccentButtonStyle: ButtonStyle {
     let accent: Color
 
@@ -642,8 +618,38 @@ private struct AccentButtonStyle: ButtonStyle {
             .foregroundStyle(Color.black.opacity(0.82))
             .padding(.horizontal, 13)
             .padding(.vertical, 9)
-            .background(accent.opacity(configuration.isPressed ? 0.78 : 1), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .background(
+                accent.opacity(configuration.isPressed ? 0.7 : 0.9),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(.white.opacity(0.3), lineWidth: 0.75)
+            }
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+private struct PopoverGlassButtonStyle: ButtonStyle {
+    var cornerRadius: CGFloat = 9
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(.primary.opacity(configuration.isPressed ? 0.68 : 0.82))
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .background(
+                Color.white.opacity(configuration.isPressed ? 0.04 : 0.1),
+                in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(.white.opacity(configuration.isPressed ? 0.22 : 0.38), lineWidth: 0.75)
+            }
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }

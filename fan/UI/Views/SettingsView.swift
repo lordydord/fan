@@ -252,10 +252,10 @@ struct SettingsView: View {
                         .font(.system(size: 12, weight: .semibold))
                         .padding(.horizontal, 14)
                         .padding(.vertical, 12)
-                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
                         .overlay {
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+                            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                                .strokeBorder(.white.opacity(0.32), lineWidth: 0.75)
                         }
                     }
                     .buttonStyle(.plain)
@@ -286,17 +286,18 @@ struct SettingsView: View {
                     .font(.system(size: 13, weight: .bold))
                     .frame(width: 30, height: 30)
             }
-            .buttonStyle(SettingsChromeButtonStyle())
+            .buttonStyle(SettingsGlassButtonStyle())
             .help("Back to fan controls")
 
             ZStack {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(accent)
+                    .fill(accent.opacity(0.16))
                 Image(systemName: "slider.horizontal.3")
                     .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(Color.black.opacity(0.82))
+                    .foregroundStyle(accent)
             }
             .frame(width: 34, height: 34)
+            .glassEffect(.clear.tint(accent.opacity(0.08)), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
             Text("Fan App")
                 .font(.system(size: 18, weight: .bold, design: .rounded))
@@ -316,14 +317,14 @@ struct SettingsView: View {
 
     private var background: some View {
         ZStack {
-            Rectangle().fill(.ultraThinMaterial)
+            Color.clear
             LinearGradient(
-                colors: [accent.opacity(0.09), .clear, Color.primary.opacity(0.025)],
+                colors: [accent.opacity(0.045), .clear, Color.primary.opacity(0.015)],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
             Circle()
-                .fill(accent.opacity(0.07))
+                .fill(accent.opacity(0.035))
                 .frame(width: 250, height: 250)
                 .blur(radius: 52)
                 .offset(x: 150, y: -250)
@@ -344,11 +345,7 @@ struct SettingsView: View {
             VStack(spacing: 0) {
                 content()
             }
-            .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 15, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-            }
+            .liquidGlass(cornerRadius: 17, tint: accent.opacity(0.012), shadowOpacity: 0.04)
         }
     }
 
@@ -367,7 +364,7 @@ struct SettingsView: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(accent)
                     .frame(width: 28, height: 28)
-                    .background(accent.opacity(0.11), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .glassEffect(.clear.tint(accent.opacity(0.12)), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
@@ -429,16 +426,21 @@ struct SettingsView: View {
     }
 }
 
-private struct SettingsChromeButtonStyle: ButtonStyle {
+private struct SettingsGlassButtonStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.primary.opacity(configuration.isPressed ? 0.68 : 0.82))
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             .background(
-                Color.primary.opacity(configuration.isPressed ? 0.11 : 0.055),
-                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                Color.white.opacity(configuration.isPressed ? 0.04 : 0.1),
+                in: RoundedRectangle(cornerRadius: 9, style: .continuous)
             )
+            .overlay {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .strokeBorder(.white.opacity(configuration.isPressed ? 0.22 : 0.38), lineWidth: 0.75)
+            }
             .scaleEffect(configuration.isPressed ? 0.96 : 1)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }

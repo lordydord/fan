@@ -24,6 +24,10 @@ documentation:
     title: "Fan App 1.1.3 release notes"
     audience: ["users", "maintainers"]
     last_updated: "2026-07-12"
+  - file: "release-notes/v1.1.4.md"
+    title: "Fan App 1.1.4 release notes"
+    audience: ["users", "maintainers"]
+    last_updated: "2026-07-21"
   - file: "privacy.html"
     title: "Privacy"
     audience: ["users"]
