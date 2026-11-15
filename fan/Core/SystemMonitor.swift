@@ -1,56 +1,26 @@
 //
 //  SystemMonitor.swift
-//  ffan
+//  fan
 //
-//  Created by mohamad on 11/1/2026.
-//  Rewritten for proper SMC access on both Intel and Apple Silicon Macs
+//  Reads temperatures and fan speeds from the SMC on a background queue.
+//
+//  Kept cheap on purpose: the working sensor keys are found once and remembered, keys this
+//  Mac doesn't have are never asked for again, the fans' fixed min/max speeds are read once,
+//  values are only published when they change, and the read timer has tolerance so macOS
+//  can batch its wake-ups with other work.
 //
 
 import Foundation
 import Combine
 import IOKit
 
-// MARK: - Data Structures
-
-struct TemperatureReading {
-    let cpu: Double?
-    let gpu: Double?
-}
-
-struct FanReading {
-    let id: Int
-    let speed: Int
-    let minSpeed: Int
-    let maxSpeed: Int
-}
-
-// MARK: - SMC Types (Compatible with actual Apple SMC)
+// MARK: - SMC types (layout must match the kernel's SMCParamStruct)
 
 private typealias SMCBytes = (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
-                               UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
-                               UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
-                               UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)
+                              UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
+                              UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
+                              UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)
 
-// SMC key as 4-character code (FourCharCode)
-private func fourCharCodeFrom(_ string: String) -> UInt32 {
-    var result: UInt32 = 0
-    for (index, char) in string.utf8.prefix(4).enumerated() {
-        result |= UInt32(char) << (8 * (3 - index))
-    }
-    return result
-}
-
-private func stringFrom(fourCharCode: UInt32) -> String {
-    let bytes = [
-        UInt8((fourCharCode >> 24) & 0xFF),
-        UInt8((fourCharCode >> 16) & 0xFF),
-        UInt8((fourCharCode >> 8) & 0xFF),
-        UInt8(fourCharCode & 0xFF)
-    ]
-    return String(bytes: bytes, encoding: .ascii) ?? "????"
-}
-
-// SMC Version structure
 private struct SMCKeyData_vers_t {
     var major: UInt8 = 0
     var minor: UInt8 = 0
@@ -59,7 +29,6 @@ private struct SMCKeyData_vers_t {
     var release: UInt16 = 0
 }
 
-// SMC Limit Data
 private struct SMCKeyData_pLimitData_t {
     var version: UInt16 = 0
     var length: UInt16 = 0
@@ -68,14 +37,12 @@ private struct SMCKeyData_pLimitData_t {
     var memPLimit: UInt32 = 0
 }
 
-// SMC Key Info structure
 private struct SMCKeyData_keyInfo_t {
     var dataSize: UInt32 = 0
     var dataType: UInt32 = 0
     var dataAttributes: UInt8 = 0
 }
 
-// Main SMC structure - must match kernel's SMCParamStruct exactly
 private struct SMCParamStruct {
     var key: UInt32 = 0
     var vers = SMCKeyData_vers_t()
@@ -89,17 +56,131 @@ private struct SMCParamStruct {
     var bytes: SMCBytes = (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)
 }
 
-// SMC selector (kSMCUserClientOpen = 0, kSMCHandleYPCEvent = 2, etc.)
 private let KERNEL_INDEX_SMC: UInt32 = 2
-
-// SMC commands
 private let SMC_CMD_READ_BYTES: UInt8 = 5
-private let SMC_CMD_WRITE_BYTES: UInt8 = 6
 private let SMC_CMD_READ_KEYINFO: UInt8 = 9
 
-// MARK: - System Monitor Class
+private func fourCC(_ s: String) -> UInt32 {
+    var r: UInt32 = 0
+    for (i, c) in s.utf8.prefix(4).enumerated() { r |= UInt32(c) << (8 * (3 - i)) }
+    return r
+}
 
-class SystemMonitor: ObservableObject {
+// MARK: - SMC reader (used only from SystemMonitor's queue)
+
+private final class SMCReader: @unchecked Sendable {
+    private var connection: io_connect_t = 0
+    private var keyInfo: [UInt32: SMCKeyData_keyInfo_t] = [:]
+    private var missing: Set<UInt32> = []
+    private let lock = NSLock()
+    private(set) var lastError: String?
+
+    private static let flt = fourCC("flt ")
+    private static let sp78 = fourCC("sp78")
+    private static let fpe2 = fourCC("fpe2")
+    private static let ui8 = fourCC("ui8 ")
+    private static let ui16 = fourCC("ui16")
+    private static let ui32 = fourCC("ui32")
+    private static let si16 = fourCC("si16")
+
+    var isOpen: Bool { lock.lock(); defer { lock.unlock() }; return connection != 0 }
+
+    func open() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if connection != 0 { return true }
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSMC"))
+        guard service != 0 else { lastError = "AppleSMC service not found"; return false }
+        defer { IOObjectRelease(service) }
+        let result = IOServiceOpen(service, mach_task_self_, 0, &connection)
+        if result == kIOReturnSuccess { lastError = nil; return true }
+        connection = 0
+        lastError = "Couldn’t open the SMC (error \(result))"
+        return false
+    }
+
+    func close() {
+        lock.lock(); defer { lock.unlock() }
+        if connection != 0 { IOServiceClose(connection); connection = 0 }
+    }
+
+    private func call(_ input: inout SMCParamStruct) -> SMCParamStruct? {
+        var output = SMCParamStruct()
+        var size = MemoryLayout<SMCParamStruct>.size
+        let r = IOConnectCallStructMethod(connection, KERNEL_INDEX_SMC, &input,
+                                          MemoryLayout<SMCParamStruct>.size, &output, &size)
+        return r == kIOReturnSuccess && output.result == 0 ? output : nil
+    }
+
+    /// Reads one key. Keys this Mac doesn't have are remembered and skipped from then on.
+    func read(_ key: String) -> Double? {
+        lock.lock(); defer { lock.unlock() }
+        guard connection != 0 else { return nil }
+        let code = fourCC(key)
+        if missing.contains(code) { return nil }
+
+        let info: SMCKeyData_keyInfo_t
+        if let cached = keyInfo[code] {
+            info = cached
+        } else {
+            var input = SMCParamStruct()
+            input.key = code
+            input.data8 = SMC_CMD_READ_KEYINFO
+            guard let out = call(&input), out.keyInfo.dataSize > 0, out.keyInfo.dataSize <= 32 else {
+                missing.insert(code)
+                return nil
+            }
+            info = out.keyInfo
+            keyInfo[code] = info
+        }
+
+        var input = SMCParamStruct()
+        input.key = code
+        input.keyInfo = info
+        input.data8 = SMC_CMD_READ_BYTES
+        guard let out = call(&input) else { return nil }
+        return Self.parse(out.bytes, type: info.dataType, size: info.dataSize)
+    }
+
+    /// The first key in `keys` that gives a believable temperature.
+    func firstTemperatureKey(_ keys: [String]) -> String? {
+        keys.first { key in read(key).map { $0 > 0 && $0 < 150 } ?? false }
+    }
+
+    func temperature(_ key: String) -> Double? {
+        guard let t = read(key), t > 0, t < 150 else { return nil }
+        return t
+    }
+
+    private static func parse(_ bytes: SMCBytes, type: UInt32, size: UInt32) -> Double? {
+        withUnsafeBytes(of: bytes) { raw -> Double? in
+            let b0 = raw[0], b1 = raw[1]
+            switch (type, size) {
+            case (flt, 4):
+                return Double(raw.loadUnaligned(as: Float32.self))
+            case (sp78, 2):
+                return Double(Int16(bitPattern: UInt16(b0) << 8 | UInt16(b1))) / 256
+            case (fpe2, 2):
+                return Double((Int(b0) << 6) + (Int(b1) >> 2))
+            case (ui8, 1):
+                return Double(b0)
+            case (ui16, 2):
+                return Double(UInt16(b0) << 8 | UInt16(b1))
+            case (ui32, 4):
+                return Double(UInt32(b0) << 24 | UInt32(b1) << 16 | UInt32(raw[2]) << 8 | UInt32(raw[3]))
+            case (si16, 2):
+                return Double(Int16(bitPattern: UInt16(b0) << 8 | UInt16(b1)))
+            case (_, 2):
+                return Double(UInt16(b0) << 8 | UInt16(b1))
+            default:
+                return nil
+            }
+        }
+    }
+}
+
+// MARK: - System monitor
+
+final class SystemMonitor: ObservableObject {
     @Published var cpuTemperature: Double?
     @Published var gpuTemperature: Double?
     @Published var fanSpeeds: [Int] = []
@@ -109,637 +190,124 @@ class SystemMonitor: ObservableObject {
     @Published var isMonitoring = false
     @Published var hasAccess = false
     @Published var lastError: String?
-    
-    private var smcConnection: io_connect_t = 0
-    private var monitoringTimer: Timer?
-    private var monitoringInterval: TimeInterval = UserDefaults.standard.double(forKey: "monitoringInterval") > 0 ? UserDefaults.standard.double(forKey: "monitoringInterval") : 5.0
-    private var isReadInProgress = false
-    private let smcLock = NSRecursiveLock()
-    private var keyInfoCache: [UInt32: SMCKeyData_keyInfo_t] = [:]
-    
-    // Temperature sensor keys - ordered by priority
-    // TC0P = CPU Proximity, TC0E/TC0F = CPU Core, TCXC = CPU Core (Apple Silicon)
-    private let cpuTempKeys = ["TC0P", "TCXC", "TC0E", "TC0F", "TC0D", "TC1C", "TC2C", "TC3C", "TC4C"]
-    // TGDD = GPU Die, TG0P = GPU Proximity, TG0D = GPU Die
-    private let gpuTempKeys = ["TGDD", "TG0P", "TG0D", "TG0E", "TG0F"]
-    
-    // Apple Silicon specific keys
-    private let appleChipTempKeys = ["Tp09", "Tp0T", "Tp01", "Tp05", "Tp0D", "Tp0b"]
-    
+
+    private let smc = SMCReader()
+    private let queue = DispatchQueue(label: "com.soloteamdev.ffan.smc", qos: .utility)
+    private var timer: Timer?
+    private var interval: TimeInterval = 5
+    private var readInFlight = false
+    /// Sensor keys found to work on this Mac; nil until the first read.
+    private var sensorKeys: (cpu: String?, gpu: String?)?
+
+    // Intel keys first, then Apple silicon keys.
+    private static let cpuKeys = ["TC0P", "TCXC", "TC0E", "TC0F", "TC0D", "TC1C", "TC2C", "TC3C", "TC4C",
+                                  "Tp09", "Tp0T", "Tp01", "Tp05", "Tp0D", "Tp0b"]
+    private static let gpuKeys = ["TGDD", "TG0P", "TG0D", "TG0E", "TG0F"]
+
     init() {
-        // Try to connect on init
-        _ = openSMCConnection()
+        hasAccess = smc.open()
+        lastError = smc.lastError
     }
-    
+
     deinit {
-        stopMonitoring()
-        closeSMCConnection()
+        timer?.invalidate()
+        smc.close()
     }
-    
-    // MARK: - SMC Connection Management
-    
-    private func openSMCConnection() -> Bool {
-        if smcConnection != 0 {
-            hasAccess = true
-            return true
-        }
-        
-        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSMC"))
-        guard service != 0 else {
-            lastError = "AppleSMC service not found"
-            hasAccess = false
-            return false
-        }
-        
-        defer { IOObjectRelease(service) }
-        
-        let result = IOServiceOpen(service, mach_task_self_, 0, &smcConnection)
-        
-        if result == kIOReturnSuccess {
-            hasAccess = true
-            lastError = nil
-            return true
-        } else {
-            let errorString = describeIOReturn(result)
-            lastError = "Failed to open SMC connection: \(errorString)"
-            hasAccess = false
-            return false
-        }
-    }
-    
-    private func closeSMCConnection() {
-        if smcConnection != 0 {
-            IOServiceClose(smcConnection)
-            smcConnection = 0
-        }
-    }
-    
-    private func describeIOReturn(_ result: IOReturn) -> String {
-        switch Int32(bitPattern: UInt32(result)) {
-        case kIOReturnSuccess: return "Success"
-        case kIOReturnError: return "General error"
-        case kIOReturnNoMemory: return "No memory"
-        case kIOReturnNoResources: return "No resources"
-        case kIOReturnBadArgument: return "Bad argument"
-        case kIOReturnNotPrivileged: return "Not privileged (needs root)"
-        case kIOReturnNotOpen: return "Not open"
-        case kIOReturnNotFound: return "Not found"
-        case kIOReturnNotReadable: return "Not readable"
-        case kIOReturnNotWritable: return "Not writable"
-        default: return "Error code: \(result)"
-        }
-    }
-    
+
     func checkAccess() -> Bool {
-        if smcConnection == 0 {
-            _ = openSMCConnection()
-        }
+        if !hasAccess { hasAccess = smc.open(); lastError = smc.lastError }
         return hasAccess
     }
-    
-    func getDataType(key: String) -> String? {
-        // Ensure connection
-        if smcConnection == 0 { _ = openSMCConnection() }
-        
-        let keyCode = fourCharCodeFrom(key)
-        
-        // Use cached if available
-        if let info = keyInfoCache[keyCode] {
-            return stringFrom(fourCharCode: info.dataType).trimmingCharacters(in: .whitespaces)
-        }
-        
-        // Otherwise try to fetch it
-        var input = SMCParamStruct()
-        input.key = keyCode
-        input.data8 = SMC_CMD_READ_KEYINFO
-        
-        var output = SMCParamStruct()
-        var outputSize = MemoryLayout<SMCParamStruct>.size
-        
-        let result = IOConnectCallStructMethod(smcConnection, KERNEL_INDEX_SMC, &input, MemoryLayout<SMCParamStruct>.size, &output, &outputSize)
-        
-        if result == kIOReturnSuccess && output.result == 0 {
-            // Validate dataSize to avoid corrupt/out-of-range values
-            let dataSize = output.keyInfo.dataSize
-            if dataSize == 0 || dataSize > 32 {
-                print("SMC: Invalid dataSize (\(dataSize)) for key \(key)")
-                return nil
-            }
-            keyInfoCache[keyCode] = output.keyInfo
-            return stringFrom(fourCharCode: output.keyInfo.dataType).trimmingCharacters(in: .whitespaces)
-        }
-        
-        return nil
-    }
-    
-    // MARK: - Monitoring Control
-    
+
+    // MARK: Control
+
     func startMonitoring() {
-        guard openSMCConnection() else {
-            print("SMC: Cannot start monitoring - no connection")
-            return
-        }
-        
-        stopMonitoring()
+        guard checkAccess() else { return }
+        timer?.invalidate()
+        timer = nil
         isMonitoring = true
-        
-        // Initial read
-        updateReadings()
-        
-        // Detect number of fans
-        detectFans()
-        
+        if numberOfFans == 0 { detectFans() } else { read() }
     }
-    
+
     func stopMonitoring() {
-        monitoringTimer?.invalidate()
-        monitoringTimer = nil
+        timer?.invalidate()
+        timer = nil
         isMonitoring = false
     }
 
-    func setMonitoringInterval(_ interval: TimeInterval) {
-        monitoringInterval = max(2.0, min(30.0, interval))
-        UserDefaults.standard.set(monitoringInterval, forKey: "monitoringInterval")
-        if isMonitoring { startMonitoring() }
+    func setMonitoringInterval(_ value: TimeInterval) {
+        let v = max(2, min(30, value))
+        guard v != interval else { return }
+        interval = v
+        if isMonitoring, !readInFlight { scheduleNext() }
     }
 
-    private func scheduleNextRead() {
-        guard isMonitoring else { return }
-        monitoringTimer?.invalidate()
-        let hottest = max(cpuTemperature ?? 0, gpuTemperature ?? 0)
-        let interval = FanControlPolicy.adaptiveInterval(temperature: hottest, preferred: monitoringInterval)
-        monitoringTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
-            self?.updateReadings()
-        }
-        RunLoop.current.add(monitoringTimer!, forMode: .common)
-    }
-    
-    // MARK: - Fan Detection
-    
+    // MARK: Reading
+
     private func detectFans() {
-        var count = 0
-        for i in 0..<8 {
-            let key = String(format: "F%dAc", i)
-            if let _ = readSMCValue(key: key) {
-                count += 1
-            } else {
-                break
-            }
-        }
-        
-        DispatchQueue.main.async {
-            self.numberOfFans = count
-            print("SMC: Detected \(count) fan(s)")
-        }
-    }
-    
-    // MARK: - Reading Updates
-    
-    private func updateReadings() {
-        guard !isReadInProgress else { return }
-        isReadInProgress = true
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            
-            // Read temperatures
-            var cpuTemp: Double? = nil
-            var gpuTemp: Double? = nil
-            
-            // Try standard keys first
-            for key in self.cpuTempKeys {
-                if let temp = self.readSMCTemperature(key: key), temp > 0 && temp < 150 {
-                    cpuTemp = temp
-                    break
-                }
-            }
-            
-            // Try Apple Silicon keys if standard failed
-            if cpuTemp == nil {
-                for key in self.appleChipTempKeys {
-                    if let temp = self.readSMCTemperature(key: key), temp > 0 && temp < 150 {
-                        cpuTemp = temp
-                        break
-                    }
-                }
-            }
-            
-            for key in self.gpuTempKeys {
-                if let temp = self.readSMCTemperature(key: key), temp > 0 && temp < 150 {
-                    gpuTemp = temp
-                    break
-                }
-            }
-            
-            // Read fan data
-            var speeds: [Int] = []
-            var minSpeeds: [Int] = []
-            var maxSpeeds: [Int] = []
-            
-            for i in 0..<self.numberOfFans {
-                // F%dAc = Actual speed, F%dMn = Minimum, F%dMx = Maximum
-                let actualKey = String(format: "F%dAc", i)
-                let minKey = String(format: "F%dMn", i)
-                let maxKey = String(format: "F%dMx", i)
-                
-                if let speed = self.readSMCFanSpeed(key: actualKey) {
-                    speeds.append(speed)
-                }
-                if let min = self.readSMCFanSpeed(key: minKey) {
-                    minSpeeds.append(min)
-                } else {
-                    minSpeeds.append(1000) // Default
-                }
-                if let max = self.readSMCFanSpeed(key: maxKey) {
-                    maxSpeeds.append(max)
-                } else {
-                    maxSpeeds.append(6500) // Default
-                }
-            }
-            
-            // Fallback for demo mode
-            let showDemo = UserDefaults.standard.bool(forKey: "showDemoData")
-            if cpuTemp == nil && gpuTemp == nil && speeds.isEmpty && showDemo {
-                cpuTemp = 55.0 + Double.random(in: 0...15)
-                gpuTemp = 60.0 + Double.random(in: 0...20)
-                speeds = [Int.random(in: 1800...3500)]
-                minSpeeds = [1000]
-                maxSpeeds = [6500]
-            }
-            
-            // Update on main thread — only assign if values actually changed
-            // This prevents SwiftUI from re-rendering the entire view tree on every poll
+        let smc = self.smc
+        queue.async { [weak self] in
+            var count = 0
+            while count < 8, smc.read("F\(count)Ac") != nil { count += 1 }
+            // Min and max are fixed for the hardware, so read them once here.
+            let mins = (0..<count).map { Int(smc.read("F\($0)Mn") ?? 1000) }
+            let maxs = (0..<count).map { Int(smc.read("F\($0)Mx") ?? 6500) }
             DispatchQueue.main.async {
-                self.isReadInProgress = false
-                // Round temperatures to 1 decimal place to avoid re-renders from floating point noise
-                let roundedCpu = cpuTemp.map { (($0 * 10).rounded() / 10) }
-                let roundedGpu = gpuTemp.map { (($0 * 10).rounded() / 10) }
-                if self.cpuTemperature != roundedCpu { self.cpuTemperature = roundedCpu }
-                if self.gpuTemperature != roundedGpu { self.gpuTemperature = roundedGpu }
-                if self.fanSpeeds != speeds { self.fanSpeeds = speeds }
-                if self.fanMinSpeeds != minSpeeds { self.fanMinSpeeds = minSpeeds }
-                if self.fanMaxSpeeds != maxSpeeds { self.fanMaxSpeeds = maxSpeeds }
-                if self.numberOfFans == 0 && !speeds.isEmpty {
-                    self.numberOfFans = speeds.count
-                }
-                self.scheduleNextRead()
+                guard let self else { return }
+                self.fanMinSpeeds = mins
+                self.fanMaxSpeeds = maxs
+                self.numberOfFans = count
+                self.read()
             }
         }
-    }
-    
-    // MARK: - SMC Data Parsing
-    
-    // Type codes
-    private let DATA_TYPE_FLT = fourCharCodeFrom("flt ")
-    private let DATA_TYPE_SP78 = fourCharCodeFrom("sp78")
-    private let DATA_TYPE_FPE2 = fourCharCodeFrom("fpe2")
-    private let DATA_TYPE_UINT8 = fourCharCodeFrom("ui8 ")
-    private let DATA_TYPE_UINT16 = fourCharCodeFrom("ui16")
-    private let DATA_TYPE_UINT32 = fourCharCodeFrom("ui32")
-    private let DATA_TYPE_SINT16 = fourCharCodeFrom("si16")
-    
-    private func parseSMCBytes(_ bytes: SMCBytes, dataType: UInt32, dataSize: UInt32) -> Double? {
-        // Helper to get bytes as array
-        let byteArray = [
-            bytes.0, bytes.1, bytes.2, bytes.3, bytes.4, bytes.5, bytes.6, bytes.7,
-            bytes.8, bytes.9, bytes.10, bytes.11, bytes.12, bytes.13, bytes.14, bytes.15,
-            bytes.16, bytes.17, bytes.18, bytes.19, bytes.20, bytes.21, bytes.22, bytes.23,
-            bytes.24, bytes.25, bytes.26, bytes.27, bytes.28, bytes.29, bytes.30, bytes.31
-        ]
-        
-        switch dataType {
-        case DATA_TYPE_FLT:
-            if dataSize == 4 {
-                let val = byteArray.withUnsafeBufferPointer {
-                    $0.baseAddress!.withMemoryRebound(to: Float32.self, capacity: 1) { $0.pointee }
-                }
-                return Double(val)
-            }
-            
-        case DATA_TYPE_SP78:
-            if dataSize == 2 {
-                // Fixed Point 7.8 (Signed)
-                // First bit is sign, next 7 are integer part, last 8 are fractional
-                let b0 = Int(byteArray[0])
-                let b1 = Int(byteArray[1])
-                let val = (b0 << 8) | b1
-                return Double(Int16(bitPattern: UInt16(val))) / 256.0
-            }
-            
-        case DATA_TYPE_FPE2:
-            if dataSize == 2 {
-                // Fixed Point 14.2 (Unsigned)
-                // First 14 bits are integer part, last 2 are fractional
-                // Calculation: (Byte0 << 6) + (Byte1 >> 2)
-                let b0 = Int(byteArray[0])
-                let b1 = Int(byteArray[1])
-                let val = (b0 << 6) + (b1 >> 2)
-                return Double(val)
-            }
-            
-        case DATA_TYPE_UINT8:
-            if dataSize == 1 {
-                return Double(byteArray[0])
-            }
-            
-        case DATA_TYPE_UINT16:
-            if dataSize == 2 {
-                let val = (Int(byteArray[0]) << 8) + Int(byteArray[1])
-                return Double(val)
-            }
-            
-        case DATA_TYPE_UINT32:
-            if dataSize == 4 {
-                let val = (UInt32(byteArray[0]) << 24) | (UInt32(byteArray[1]) << 16) | (UInt32(byteArray[2]) << 8) | UInt32(byteArray[3])
-                return Double(val)
-            }
-        
-        case DATA_TYPE_SINT16:
-            if dataSize == 2 {
-                let val = (UInt16(byteArray[0]) << 8) | UInt16(byteArray[1])
-                return Double(Int16(bitPattern: val))
-            }
-            
-        default:
-            // Check for potential fallback or unknown type
-            if dataSize == 2 {
-                let val = (Int(byteArray[0]) << 8) + Int(byteArray[1])
-                return Double(val)
-            }
-        }
-        
-        return nil
-    }
-    
-    // MARK: - SMC Read Operations
-    
-    // Generic read that handles types automatically
-    func readSMCValue(key: String) -> Double? {
-        smcLock.lock()
-        defer { smcLock.unlock() }
-        guard smcConnection != 0 else { return nil }
-        
-        let keyCode = fourCharCodeFrom(key)
-        
-        // 1. Get Key Info
-        var keyInfo: SMCKeyData_keyInfo_t
-        if let cached = keyInfoCache[keyCode] {
-            keyInfo = cached
-        } else {
-            var input = SMCParamStruct()
-            input.key = keyCode
-            input.data8 = SMC_CMD_READ_KEYINFO
-            
-            var output = SMCParamStruct()
-            let inputSize = MemoryLayout<SMCParamStruct>.size
-            var outputSize = MemoryLayout<SMCParamStruct>.size
-            
-            let result = IOConnectCallStructMethod(
-                smcConnection,
-                KERNEL_INDEX_SMC,
-                &input,
-                inputSize,
-                &output,
-                &outputSize
-            )
-            
-            if result != kIOReturnSuccess || output.result != 0 {
-                // print("SMC: Key info failed for \(key)")
-                return nil
-            }
-            
-            keyInfo = output.keyInfo
-            // Validate keyInfo.dataSize
-            if keyInfo.dataSize == 0 || keyInfo.dataSize > 32 {
-                print("SMC: Invalid keyInfo.dataSize (\(keyInfo.dataSize)) for key \(key)")
-                return nil
-            }
-            keyInfoCache[keyCode] = keyInfo
-        }
-        
-        // 2. Read Data
-        var input = SMCParamStruct()
-        input.key = keyCode
-        input.keyInfo = keyInfo
-        input.data8 = SMC_CMD_READ_BYTES
-        
-        var output = SMCParamStruct()
-        let inputSize = MemoryLayout<SMCParamStruct>.size
-        var outputSize = MemoryLayout<SMCParamStruct>.size
-        
-        let result = IOConnectCallStructMethod(
-            smcConnection,
-            KERNEL_INDEX_SMC,
-            &input,
-            inputSize,
-            &output,
-            &outputSize
-        )
-        
-        if result != kIOReturnSuccess || output.result != 0 {
-            return nil
-        }
-        
-        // Validate data size before parsing
-        if keyInfo.dataSize == 0 || keyInfo.dataSize > 32 {
-            print("SMC: Invalid read size \(keyInfo.dataSize) for key \(key)")
-            return nil
-        }
-        
-        // 3. Parse Data
-        return parseSMCBytes(output.bytes, dataType: keyInfo.dataType, dataSize: keyInfo.dataSize)
     }
 
-    private func readSMCTemperature(key: String) -> Double? {
-        return readSMCValue(key: key)
-    }
-    
-    private func readSMCFanSpeed(key: String) -> Int? {
-        if let val = readSMCValue(key: key) {
-            return Int(val)
-        }
-        return nil
-    }
-    
-    // MARK: - SMC Write Operations
-    
-    func writeSMCKey(_ key: String, value: Double) -> Bool {
-        smcLock.lock()
-        defer { smcLock.unlock() }
-        guard smcConnection != 0 else {
-            print("SMC Write: No connection")
-            return false
-        }
-        
-        let keyCode = fourCharCodeFrom(key)
-        
-        // Get key info first
-        var input = SMCParamStruct()
-        input.key = keyCode
-        input.data8 = SMC_CMD_READ_KEYINFO
-        
-        var output = SMCParamStruct()
-        var outputSize = MemoryLayout<SMCParamStruct>.size
-        
-        var result = IOConnectCallStructMethod(
-            smcConnection,
-            KERNEL_INDEX_SMC,
-            &input,
-            MemoryLayout<SMCParamStruct>.size,
-            &output,
-            &outputSize
-        )
-        
-        guard result == kIOReturnSuccess && output.result == 0 else {
-            print("SMC Write: Failed to get key info for \(key)")
-            return false
-        }
-        
-        let keyInfo = output.keyInfo
-        keyInfoCache[keyCode] = keyInfo
-        
-        // Prepare write
-        input = SMCParamStruct()
-        input.key = keyCode
-        input.keyInfo = keyInfo
-        input.data8 = SMC_CMD_WRITE_BYTES
-        
-        // Encode value based on type
-        switch keyInfo.dataType {
-        case DATA_TYPE_FLT:
-            if keyInfo.dataSize == 4 {
-                var floatVal = Float32(value)
-                withUnsafeBytes(of: &floatVal) { buffer in
-                    // SMC expects bytes, usually we write them directly
-                    // But we might need to handle endianness? 
-                    // Verify: flt on SMC is usually native float? No, usually it's standard IEEE 754
-                    // But passing through IOConnectCallStructMethod struct might require specific alignment
-                    // Let's assume standard copy
-                    if buffer.count >= 4 {
-                        input.bytes.0 = buffer[0]
-                        input.bytes.1 = buffer[1]
-                        input.bytes.2 = buffer[2]
-                        input.bytes.3 = buffer[3]
-                    }
-                }
-            } else {
-                print("SMC Write: flt type but size is \(keyInfo.dataSize)")
-                return false
+    private func read() {
+        guard isMonitoring, !readInFlight else { return }
+        readInFlight = true
+        let smc = self.smc
+        let fans = numberOfFans
+        let known = sensorKeys
+
+        queue.async { [weak self] in
+            var keys = known ?? (smc.firstTemperatureKey(Self.cpuKeys), smc.firstTemperatureKey(Self.gpuKeys))
+            var cpu = keys.cpu.flatMap(smc.temperature)
+            var gpu = keys.gpu.flatMap(smc.temperature)
+            // A remembered key that stops answering gets looked up again.
+            if keys.cpu != nil, cpu == nil {
+                keys.cpu = smc.firstTemperatureKey(Self.cpuKeys)
+                cpu = keys.cpu.flatMap(smc.temperature)
             }
-            
-        case DATA_TYPE_FPE2:
-            // Fixed Point 14.2 (Unsigned)
-            // (UInt8(self >> 6), UInt8((self << 2) ^ ((self >> 6) << 8)))
-            let intVal = Int(value)
-            input.bytes.0 = UInt8(intVal >> 6)
-            input.bytes.1 = UInt8((intVal << 2) & 0xFF) // Simplified from SMCKit logic, verify if needed
-            // SMCKit: UInt8((self << 2) ^ ((self >> 6) << 8))
-            // Let's use strict SMCKit logic:
-            // byte1 = (self << 2) is the lower 6 bits moved up
-            // the XOR part seems complex, let's stick to standard 14.2 encoding:
-            // High byte: top 8 bits of 14-bit integer
-            // Low byte: bottom 6 bits of 14-bit integer << 2
-            
-            // Re-evaluating SMCKit logic:
-            // (self >> 6) is high byte.
-            // (self << 2) puts bottom 6 bits into top of low byte
-            // ^ ((self >> 6) << 8) -> this part cancels out high bits if they remained?
-            // Actually, if we just cast to UInt8, high bits are truncated.
-            // So input.bytes.0 = UInt8(intVal >> 6) is correct for high byte.
-            // For low byte: (intVal & 0x3F) << 2.
-            input.bytes.1 = UInt8((intVal & 0x3F) << 2)
-            
-        case DATA_TYPE_SP78:
-            // Internal 7.8 -> val * 256
-            let intVal = Int16(value * 256.0)
-            let uintVal = UInt16(bitPattern: intVal)
-            input.bytes.0 = UInt8((uintVal >> 8) & 0xFF)
-            input.bytes.1 = UInt8(uintVal & 0xFF)
-            
-        case DATA_TYPE_UINT8:
-            input.bytes.0 = UInt8(value)
-            
-        case DATA_TYPE_UINT16:
-            let intVal = UInt16(value)
-            input.bytes.0 = UInt8((intVal >> 8) & 0xFF)
-            input.bytes.1 = UInt8(intVal & 0xFF)
-            
-        case DATA_TYPE_UINT32:
-            let intVal = UInt32(value)
-            input.bytes.0 = UInt8((intVal >> 24) & 0xFF)
-            input.bytes.1 = UInt8((intVal >> 16) & 0xFF)
-            input.bytes.2 = UInt8((intVal >> 8) & 0xFF)
-            input.bytes.3 = UInt8(intVal & 0xFF)
-            
-        default:
-            // Fallback: try as uint16/uint8 based on value
-            if keyInfo.dataSize == 1 {
-                input.bytes.0 = UInt8(value)
-            } else if keyInfo.dataSize == 2 {
-                let intVal = UInt16(value)
-                input.bytes.0 = UInt8((intVal >> 8) & 0xFF)
-                input.bytes.1 = UInt8(intVal & 0xFF)
-            } else {
-                print("SMC Write: Unknown type \(stringFrom(fourCharCode: keyInfo.dataType))")
-                return false
+            if keys.gpu != nil, gpu == nil {
+                keys.gpu = smc.firstTemperatureKey(Self.gpuKeys)
+                gpu = keys.gpu.flatMap(smc.temperature)
+            }
+            let speeds = (0..<fans).compactMap { smc.read("F\($0)Ac").map { Int($0) } }
+            let resolved = keys
+
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.readInFlight = false
+                self.sensorKeys = resolved
+                // Round to 0.1° so sensor noise doesn't redraw anything.
+                let c = cpu.map { ($0 * 10).rounded() / 10 }
+                let g = gpu.map { ($0 * 10).rounded() / 10 }
+                if self.cpuTemperature != c { self.cpuTemperature = c }
+                if self.gpuTemperature != g { self.gpuTemperature = g }
+                if self.fanSpeeds != speeds { self.fanSpeeds = speeds }
+                self.scheduleNext()
             }
         }
-        
-        output = SMCParamStruct()
-        outputSize = MemoryLayout<SMCParamStruct>.size
-        
-        result = IOConnectCallStructMethod(
-            smcConnection,
-            KERNEL_INDEX_SMC,
-            &input,
-            MemoryLayout<SMCParamStruct>.size,
-            &output,
-            &outputSize
-        )
-        
-        // Note: result might be kIOReturnNotPrivileged if not root
-        if result == kIOReturnSuccess {
-            print("SMC Write: Successfully wrote \(key) = \(value)")
-            return true
-        } else {
-            print("SMC Write: Failed to write \(key): \(describeIOReturn(result))")
-            return false
-        }
     }
-    
-    // MARK: - Alternative Methods (for Apple Silicon)
-    
-    func readTemperatureUsingPowermetrics() async -> Double? {
-        // powermetrics requires root privileges
-        // This is a fallback for Apple Silicon Macs where SMC may not work directly
-        
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/powermetrics")
-        process.arguments = ["--samplers", "smc", "-n", "1", "-i", "100"]
-        
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        
-        do {
-            try process.run()
-            process.waitUntilExit()
-            
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            if let output = String(data: data, encoding: .utf8) {
-                // Parse temperature from powermetrics output
-                // Format: "CPU die temperature: XX.XX C"
-                let pattern = #"CPU die temperature:\s*([\d.]+)"#
-                if let regex = try? NSRegularExpression(pattern: pattern),
-                   let match = regex.firstMatch(in: output, range: NSRange(output.startIndex..., in: output)),
-                   let range = Range(match.range(at: 1), in: output),
-                   let temp = Double(output[range]) {
-                    return temp
-                }
-            }
-        } catch {
-            print("Powermetrics error: \(error)")
-        }
-        
-        return nil
+
+    private func scheduleNext() {
+        guard isMonitoring else { return }
+        timer?.invalidate()
+        let hottest = max(cpuTemperature ?? 0, gpuTemperature ?? 0)
+        let wait = FanControlPolicy.adaptiveInterval(temperature: hottest, preferred: interval)
+        let t = Timer(timeInterval: wait, repeats: false) { [weak self] _ in self?.read() }
+        t.tolerance = wait * 0.1
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
     }
 }

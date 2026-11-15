@@ -1,447 +1,148 @@
+//
+//  SettingsView.swift
+//  fan
+//
+//  Settings page inside the popover, laid out like Claude Usage's. Every control binds
+//  straight to FanSettings, which saves on change, so what you see is what is stored.
+//
+
 import SwiftUI
-import Charts
-
-enum StatusBarDisplayMode: String, CaseIterable {
-    case none = "None"
-    case temperature = "Temperature"
-    case power = "Power Usage"
-    case fanSpeedPercentage = "Fan Speed %"
-
-    var description: String { rawValue }
-}
+import AppKit
 
 struct SettingsView: View {
     @ObservedObject var viewModel: FanControlViewModel
-    let onBack: () -> Void
+    @ObservedObject var settings: FanSettings
+    @ObservedObject private var login = LaunchAtLoginManager.shared
+    @ObservedObject private var permissions = PermissionsManager.shared
+    let back: () -> Void
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var launchAtLogin = UserDefaults.standard.bool(forKey: "launchAtLogin")
-    @State private var statusBarDisplayMode = UserDefaults.standard.string(forKey: "statusBarDisplayMode") ?? "temperature"
-    @State private var monitoringInterval = UserDefaults.standard.double(forKey: "monitoringInterval") > 0 ? UserDefaults.standard.double(forKey: "monitoringInterval") : 5.0
-    @State private var enableNotifications = UserDefaults.standard.bool(forKey: "enableNotifications")
-    @State private var highTempAlert = UserDefaults.standard.double(forKey: "highTempAlert") > 0 ? UserDefaults.standard.double(forKey: "highTempAlert") : 85.0
-    @State private var autoSwitchMode = UserDefaults.standard.bool(forKey: "autoSwitchMode")
-
-    private let accent = Color(red: 0.91, green: 0.67, blue: 0.25)
+    @Environment(\.colorScheme) private var scheme
+    private var sub: Color { Palette.sub(scheme) }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    settingsSection("General") {
-                        settingRow(
-                            icon: "power",
-                            title: "Launch at login",
-                            description: "Start Fan App when you sign in"
-                        ) {
-                            Toggle("Launch at login", isOn: $launchAtLogin)
-                                .labelsHidden()
-                                .tint(accent)
-                                .onChange(of: launchAtLogin) { _, newValue in
-                                    UserDefaults.standard.set(newValue, forKey: "launchAtLogin")
-                                    viewModel.launchAtLogin = newValue
-                                    LaunchAtLoginManager.shared.isEnabled = newValue
-                                }
-                        }
-
-                        rowDivider
-
-                        settingRow(
-                            icon: "menubar.rectangle",
-                            title: "Menu bar display",
-                            description: "Reading shown beside the fan icon"
-                        ) {
-                            Picker("Menu bar display", selection: $statusBarDisplayMode) {
-                                ForEach(StatusBarDisplayMode.allCases, id: \.self) { mode in
-                                    Text(mode.description).tag(modeKey(for: mode))
-                                }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.menu)
-                            .frame(width: 132)
-                            .onChange(of: statusBarDisplayMode) { _, newValue in
-                                UserDefaults.standard.set(newValue, forKey: "statusBarDisplayMode")
-                                viewModel.statusBarDisplayMode = newValue
-                                NotificationCenter.default.post(
-                                    name: NSNotification.Name("StatusBarDisplayModeChanged"),
-                                    object: newValue
-                                )
-                            }
-                        }
-                    }
-
-                    settingsSection("Temperature & safety") {
-                        settingRow(
-                            icon: "timer",
-                            title: "Update interval",
-                            description: "How often Fan App reads the sensors",
-                            layout: .stacked
-                        ) {
-                            sliderControl(value: $monitoringInterval, range: 2...30, step: 1, valueText: "\(Int(monitoringInterval))s")
-                                .onChange(of: monitoringInterval) { _, newValue in
-                                    UserDefaults.standard.set(newValue, forKey: "monitoringInterval")
-                                    viewModel.setMonitoringInterval(newValue)
-                                }
-                        }
-
-                        rowDivider
-
-                        settingRow(
-                            icon: "thermometer.high",
-                            title: "High temperature alert",
-                            description: "Warn when the Mac reaches this temperature",
-                            layout: .stacked
-                        ) {
-                            sliderControl(value: $highTempAlert, range: 70...95, step: 1, valueText: "\(Int(highTempAlert))°C")
-                                .onChange(of: highTempAlert) { _, newValue in
-                                    UserDefaults.standard.set(newValue, forKey: "highTempAlert")
-                                }
-                        }
-
-                        rowDivider
-
-                        settingRow(
-                            icon: "shield.lefthalf.filled",
-                            title: "Emergency protection",
-                            description: "Run every fan at full speed above this limit",
-                            layout: .stacked
-                        ) {
-                            VStack(spacing: 10) {
-                                HStack {
-                                    Text("Protection")
-                                        .font(.system(size: 11, weight: .medium))
-                                        .foregroundStyle(.secondary)
-                                    Spacer()
-                                    Toggle("Emergency protection", isOn: Binding(
-                                        get: { viewModel.fanController.emergencyProtectionEnabled },
-                                        set: {
-                                            viewModel.setEmergencyProtection(
-                                                enabled: $0,
-                                                temperature: viewModel.fanController.emergencyTemperature
-                                            )
-                                        }
-                                    ))
-                                    .labelsHidden()
-                                    .tint(accent)
-                                }
-
-                                sliderControl(
-                                    value: Binding(
-                                        get: { viewModel.fanController.emergencyTemperature },
-                                        set: {
-                                            viewModel.setEmergencyProtection(
-                                                enabled: viewModel.fanController.emergencyProtectionEnabled,
-                                                temperature: $0
-                                            )
-                                        }
-                                    ),
-                                    range: 80...100,
-                                    step: 1,
-                                    valueText: "\(Int(viewModel.fanController.emergencyTemperature))°C"
-                                )
-                            }
-                        }
-                    }
-
-                    settingsSection("Behaviour") {
-                        settingRow(
-                            icon: "bell.badge",
-                            title: "Notifications",
-                            description: "Show an alert when the high limit is reached"
-                        ) {
-                            Toggle("Notifications", isOn: $enableNotifications)
-                                .labelsHidden()
-                                .tint(accent)
-                                .onChange(of: enableNotifications) { _, newValue in
-                                    UserDefaults.standard.set(newValue, forKey: "enableNotifications")
-                                }
-                        }
-
-                        rowDivider
-
-                        settingRow(
-                            icon: "arrow.triangle.2.circlepath",
-                            title: "Automatic switching",
-                            description: "Move to smart control when temperatures spike"
-                        ) {
-                            Toggle("Automatic switching", isOn: $autoSwitchMode)
-                                .labelsHidden()
-                                .tint(accent)
-                                .onChange(of: autoSwitchMode) { _, newValue in
-                                    UserDefaults.standard.set(newValue, forKey: "autoSwitchMode")
-                                }
-                        }
-                    }
-
-                    if viewModel.numberOfFans > 1 {
-                        settingsSection("Fans") {
-                            VStack(spacing: 12) {
-                                ForEach(0..<viewModel.numberOfFans, id: \.self) { index in
-                                    HStack {
-                                        Label("Fan \(index + 1)", systemImage: "fan.fill")
-                                            .font(.system(size: 12, weight: .medium))
-                                        Spacer()
-                                        Stepper(
-                                            "\(fanSpeed(at: index)) RPM",
-                                            value: Binding(
-                                                get: { fanSpeed(at: index) },
-                                                set: { viewModel.setFanSpeed($0, fanIndex: index) }
-                                            ),
-                                            in: 1000...6500,
-                                            step: 100
-                                        )
-                                        .font(.system(size: 11, weight: .semibold, design: .rounded))
-                                        .monospacedDigit()
-                                    }
-                                }
-                            }
-                            .padding(14)
-                        }
-                    }
-
-                    settingsSection("Recent temperature") {
-                        VStack(alignment: .leading, spacing: 10) {
-                            HStack {
-                                Text("Live thermal history")
-                                    .font(.system(size: 12, weight: .semibold))
-                                Spacer()
-                                Text("°C")
-                                    .font(.system(size: 9, weight: .semibold))
-                                    .foregroundStyle(.secondary)
-                            }
-
-                            Chart(viewModel.thermalHistory) { sample in
-                                AreaMark(
-                                    x: .value("Time", sample.date),
-                                    y: .value("Temperature", sample.temperature)
-                                )
-                                .foregroundStyle(
-                                    LinearGradient(
-                                        colors: [accent.opacity(0.28), accent.opacity(0.02)],
-                                        startPoint: .top,
-                                        endPoint: .bottom
-                                    )
-                                )
-
-                                LineMark(
-                                    x: .value("Time", sample.date),
-                                    y: .value("Temperature", sample.temperature)
-                                )
-                                .foregroundStyle(accent)
-                                .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-                            }
-                            .chartYScale(domain: 30...105)
-                            .chartXAxis(.hidden)
-                            .frame(height: 112)
-                        }
-                        .padding(14)
-                    }
-
-                    Button {
-                        viewModel.exportDiagnostics()
-                    } label: {
-                        HStack(spacing: 10) {
-                            Image(systemName: "doc.text.magnifyingglass")
-                            Text("Export diagnostics")
-                            Spacer()
-                            Image(systemName: "arrow.up.forward.square")
-                                .foregroundStyle(.secondary)
-                        }
-                        .font(.system(size: 12, weight: .semibold))
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                                .strokeBorder(.white.opacity(0.32), lineWidth: 0.75)
-                        }
-                    }
-                    .buttonStyle(.plain)
-
-                    HStack(spacing: 6) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(accent)
-                        Text("Changes apply immediately")
-                    }
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.bottom, 2)
-                }
-                .padding(.horizontal, 18)
-                .padding(.top, 4)
-                .padding(.bottom, 18)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                RoundIconButton(symbol: "chevron.left", label: "Back", action: back)
+                Text("Settings").font(.system(size: 13, weight: .semibold))
+                Spacer()
             }
-        }
-        .frame(width: 380, height: 620)
-        .background(background)
-    }
+            .frame(height: 28)
 
-    private var header: some View {
-        HStack(spacing: 12) {
-            Button(action: onBack) {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 13, weight: .bold))
-                    .frame(width: 30, height: 30)
-            }
-            .buttonStyle(SettingsGlassButtonStyle())
-            .help("Back to fan controls")
-
-            ZStack {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(accent.opacity(0.16))
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(accent)
-            }
-            .frame(width: 34, height: 34)
-            .glassEffect(.clear.tint(accent.opacity(0.08)), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-
-            Text("Fan App")
-                .font(.system(size: 18, weight: .bold, design: .rounded))
-                .tracking(-0.5)
-
-            Spacer()
-
-            Text("SETTINGS")
-                .font(.system(size: 9, weight: .semibold))
-                .tracking(1.2)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 18)
-        .padding(.top, 16)
-        .padding(.bottom, 14)
-    }
-
-    private var background: some View {
-        ZStack {
-            Color.clear
-            LinearGradient(
-                colors: [accent.opacity(0.045), .clear, Color.primary.opacity(0.015)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            Circle()
-                .fill(accent.opacity(0.035))
-                .frame(width: 250, height: 250)
-                .blur(radius: 52)
-                .offset(x: 150, y: -250)
-        }
-    }
-
-    private func settingsSection<Content: View>(
-        _ title: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title.uppercased())
-                .font(.system(size: 9, weight: .semibold))
-                .tracking(1.2)
-                .foregroundStyle(.secondary)
-                .padding(.leading, 2)
-
-            VStack(spacing: 0) {
-                content()
-            }
-            .liquidGlass(cornerRadius: 17, tint: accent.opacity(0.012), shadowOpacity: 0.04)
-        }
-    }
-
-    private enum RowLayout { case inline, stacked }
-
-    private func settingRow<Content: View>(
-        icon: String,
-        title: String,
-        description: String,
-        layout: RowLayout = .inline,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: layout == .stacked ? 11 : 0) {
-            HStack(spacing: 11) {
-                Image(systemName: icon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(accent)
-                    .frame(width: 28, height: 28)
-                    .glassEffect(.clear.tint(accent.opacity(0.12)), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.system(size: 12, weight: .semibold))
-                    Text(description)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 8)
-
-                if layout == .inline {
-                    content()
+            section("Menu bar") {
+                row("Show") {
+                    Picker("Show", selection: $settings.menuBarDisplay) {
+                        ForEach(MenuBarDisplay.allCases) { Text($0.label).tag($0) }
+                    }
+                    .pickerStyle(.segmented).labelsHidden().frame(width: 196)
                 }
             }
 
-            if layout == .stacked {
-                content()
-                    .padding(.leading, 39)
+            section("When it gets hot") {
+                sliderRow("Hot at", value: "\(Int(settings.highTempAlert))°",
+                          binding: $settings.highTempAlert, range: 70...95)
+                toggle("Notify me", $settings.notifyHighTemp)
+                toggle("Switch to Smart until it cools", $settings.autoSwitchWhenHot,
+                       help: "Only in macOS or Manual mode. Your choice comes back once it’s 5° cooler — it isn’t changed.")
             }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-    }
 
-    private var rowDivider: some View {
-        Divider().padding(.leading, 53)
-    }
-
-    private func sliderControl(
-        value: Binding<Double>,
-        range: ClosedRange<Double>,
-        step: Double,
-        valueText: String
-    ) -> some View {
-        HStack(spacing: 10) {
-            Slider(value: value, in: range, step: step)
-                .tint(accent)
-            Text(valueText)
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-                .frame(width: 42, alignment: .trailing)
-        }
-    }
-
-    private func modeKey(for mode: StatusBarDisplayMode) -> String {
-        switch mode {
-        case .none: return "none"
-        case .temperature: return "temperature"
-        case .power: return "power"
-        case .fanSpeedPercentage: return "fanSpeedPercentage"
-        }
-    }
-
-    private func fanSpeed(at index: Int) -> Int {
-        viewModel.fanSpeeds.indices.contains(index) ? viewModel.fanSpeeds[index] : 1000
-    }
-}
-
-private struct SettingsGlassButtonStyle: ButtonStyle {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .foregroundStyle(.primary.opacity(configuration.isPressed ? 0.68 : 0.82))
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .background(
-                Color.white.opacity(configuration.isPressed ? 0.04 : 0.1),
-                in: RoundedRectangle(cornerRadius: 9, style: .continuous)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .strokeBorder(.white.opacity(configuration.isPressed ? 0.22 : 0.38), lineWidth: 0.75)
+            section("Safety") {
+                toggle("Full speed in an emergency", $settings.emergencyEnabled)
+                sliderRow("Above", value: "\(Int(settings.emergencyTemperature))°",
+                          binding: $settings.emergencyTemperature, range: 80...100)
+                    .disabled(!settings.emergencyEnabled)
+                    .opacity(settings.emergencyEnabled ? 1 : 0.45)
             }
-            .scaleEffect(configuration.isPressed ? 0.96 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+
+            section("General") {
+                row("Read sensors every") {
+                    Picker("Read sensors every", selection: $settings.monitoringInterval) {
+                        ForEach(FanSettings.intervals, id: \.self) { Text("\(Int($0))s").tag($0) }
+                    }
+                    .pickerStyle(.segmented).labelsHidden().frame(width: 150)
+                }
+                toggle("Open at login", Binding(
+                    get: { settings.launchAtLogin },
+                    set: { on in
+                        settings.launchAtLogin = on
+                        login.isEnabled = on
+                    }))
+                if settings.launchAtLogin && login.needsApproval {
+                    row("Needs approval in System Settings") {
+                        Button("Open…") { login.openLoginItemsSettings() }.controlSize(.small)
+                    }
+                    .foregroundStyle(Palette.amber(scheme))
+                }
+                row("Diagnostics") {
+                    Button("Export…") { viewModel.exportDiagnostics() }.controlSize(.small)
+                }
+            }
+
+            HStack {
+                Image(systemName: permissions.isHelperInstalled ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                    .foregroundStyle(permissions.isHelperInstalled ? Palette.good(scheme) : Palette.amber(scheme))
+                Text(permissions.isHelperInstalled ? "Settings save as you go" : "Helper not installed")
+                    .foregroundStyle(sub)
+                Spacer()
+                Button {
+                    viewModel.resetToSystemControl()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { NSApp.terminate(nil) }
+                } label: {
+                    Text("Quit").font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(scheme == .dark ? Color(hex: 0xFF7FA3) : Color(hex: 0xB0123F))
+                        .padding(.horizontal, 12).frame(height: 26)
+                        .background(Capsule().fill(Color(hex: 0xC8174D, alpha: 0.12)))
+                }
+                .buttonStyle(.plain)
+                .help("Hands the fans back to macOS, then quits")
+            }
+            .font(.system(size: 11))
+            .padding(.horizontal, 4)
+        }
+        .onAppear { login.refresh() }
+    }
+
+    private func section<C: View>(_ title: String, @ViewBuilder _ content: () -> C) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            SectionLabel(title).padding(.leading, 2)
+            VStack(spacing: 6) { content() }
+                .padding(10)
+                .card(radius: 16)
+        }
+    }
+
+    private func row<C: View>(_ label: String, @ViewBuilder _ control: () -> C) -> some View {
+        HStack {
+            Text(label)
+            Spacer(minLength: 8)
+            control()
+        }
+        .frame(minHeight: 26)
+    }
+
+    private func toggle(_ label: String, _ binding: Binding<Bool>, help: String? = nil) -> some View {
+        HStack {
+            Text(label)
+            Spacer(minLength: 8)
+            Toggle(label, isOn: binding)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .tint(Palette.accent)
+        }
+        .frame(minHeight: 26)
+        .help(help ?? "")
+    }
+
+    private func sliderRow(_ label: String, value: String, binding: Binding<Double>,
+                           range: ClosedRange<Double>) -> some View {
+        HStack(spacing: 8) {
+            Text(label).frame(width: 52, alignment: .leading)
+            Slider(value: binding, in: range, step: 1)
+                .controlSize(.small)
+                .tint(Palette.accent)
+            Text(value).font(.system(size: 11, weight: .semibold))
+                .frame(width: 34, alignment: .trailing)
+        }
+        .frame(minHeight: 26)
     }
 }

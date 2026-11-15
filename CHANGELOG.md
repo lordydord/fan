@@ -2,6 +2,39 @@
 
 This repository begins a new public release line for `fan`.
 
+## 1.2.1 - 2026-10-29
+
+### Fixes
+
+- Fixed the app quitting itself when the lid was closed. Sleep and display sleep arrive together; the second notification re-entered the fan hand-back while the first was still waiting on the helper, and macOS stopped the app (crash reports since 23 Oct, all in `FanController.restoreSystemControl`). Sleep is now handled once, and helper commands wait without spinning the run loop.
+- Installed on the MacBook on 29 Oct 2026; the previous 1.2.0 app is kept at `releases/installed-backup-1.2.0/fan.app`.
+
+## 1.2.0 - 2026-10-01
+
+### Settings that stay put
+
+- Moved every choice into one settings store that saves the moment it changes; nothing else writes those values.
+- Boost, Max, emergency cooling and "switch to Smart when hot" are now temporary states held in memory, so they can no longer overwrite your saved manual speed, profile or mode.
+- Sleep, display sleep, lock and shutdown hand the fans to macOS without touching your settings; on wake the app re-applies exactly what you chose, once, after a short settle.
+- Open at login re-registers itself on launch if macOS has dropped the login item after an app update.
+- One-time migration from 1.1.x: the old System and Max profiles become modes, and a manual speed left at 6,500 RPM by Max or Boost resets to 3,000 RPM.
+
+### Performance
+
+- Sensor keys are found once and remembered; keys a Mac does not have are never queried again (previously up to nine failed SMC calls on every reading on Apple silicon).
+- Fan minimum and maximum speeds are read once at start-up instead of on every reading.
+- Fan-speed commands run on a background queue, so the menu and popover never wait on the helper.
+- The menu bar only redraws when its reading changes, and the sensor timer allows macOS to batch wake-ups.
+- Removed unused SMC write, powermetrics and demo-mode code.
+
+### Interface
+
+- Redesigned the popover and settings to match Claude Usage: Liquid Glass cards, twin gradient rings for temperature and fan speed, a temperature trend line, a single Cooling card and a teal Boost card.
+- Cooling is now four clear modes (macOS, Smart, Manual, Max), with Quiet, Balanced, Performance and Custom profiles inside Smart, plus a top-speed slider.
+- Boost shows a live countdown and the mode it returns to.
+- Right-click menu shows a tick next to the current mode and adds Quit.
+- Narrower 320 pt popover, lighter menu bar reading.
+
 ## 1.1.4 - 2026-07-21
 
 ### Interface

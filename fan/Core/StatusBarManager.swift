@@ -9,17 +9,19 @@ import AppKit
 import SwiftUI
 import Combine
 
-class StatusBarManager: ObservableObject {
+final class StatusBarManager: NSObject, ObservableObject, NSPopoverDelegate {
     private var statusItem: NSStatusItem?
     private var popover: NSPopover?
     private var currentFanSpeed: Int = 0
     private var currentTemperature: Double?
     private var currentPowerWatts: Double?
     private var displayMode: String = "temperature"
+    private var lastTitle: String?
 
     // Stored as a closure so the view is created lazily on first open.
     private var popoverContentBuilder: (() -> AnyView)?
     private var quickActionHandler: ((FanPreset) -> Void)?
+    private var selectedPresetProvider: (() -> FanPreset?)?
 
     func setupStatusBar() {
         DispatchQueue.main.async { [weak self] in
@@ -35,6 +37,10 @@ class StatusBarManager: ObservableObject {
 
     func setQuickActionHandler(_ handler: @escaping (FanPreset) -> Void) {
         quickActionHandler = handler
+    }
+
+    func setSelectedPresetProvider(_ provider: @escaping () -> FanPreset?) {
+        selectedPresetProvider = provider
     }
 
     // Legacy convenience — kept so existing call sites compile
@@ -59,7 +65,9 @@ class StatusBarManager: ObservableObject {
 
         popover = NSPopover()
         popover?.behavior = .transient
-        popover?.contentSize = NSSize(width: 380, height: 500)
+        popover?.animates = true
+        popover?.delegate = self
+        popover?.contentSize = NSSize(width: 320, height: 480)
     }
 
     private func createFanIcon(size: CGFloat) -> NSImage {
@@ -128,6 +136,7 @@ class StatusBarManager: ObservableObject {
     func setDisplayMode(_ mode: String) {
         DispatchQueue.main.async { [weak self] in
             self?.displayMode = mode
+            self?.lastTitle = nil
             if let button = self?.statusItem?.button {
                 button.imagePosition = mode == "none" ? .imageOnly : .imageLeft
             }
@@ -138,11 +147,14 @@ class StatusBarManager: ObservableObject {
     private func updateDisplay() {
         guard let button = statusItem?.button else { return }
         let text = getDisplayText()
+        // Most readings repeat; only touch the menu bar when the text actually changes.
+        guard text != lastTitle else { return }
+        lastTitle = text
         if text.isEmpty {
             button.title = ""
         } else {
             let attrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 11, weight: .regular)
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .light)
             ]
             button.attributedTitle = NSAttributedString(string: text, attributes: attrs)
         }
@@ -178,17 +190,28 @@ class StatusBarManager: ObservableObject {
 
     private func showQuickMenu(from button: NSStatusBarButton) {
         let menu = NSMenu()
+        let selected = selectedPresetProvider?()
         for (index, preset) in FanPreset.selectableCases.enumerated() {
-            let item = NSMenuItem(title: preset == .maximum ? "Max (100%)" : preset.rawValue,
-                                  action: #selector(runQuickAction(_:)), keyEquivalent: "")
+            let title: String
+            switch preset {
+            case .system: title = "macOS"
+            case .maximum: title = "Max (100%)"
+            default: title = "Smart · \(preset.rawValue)"
+            }
+            let item = NSMenuItem(title: title, action: #selector(runQuickAction(_:)), keyEquivalent: "")
             item.tag = index
             item.target = self
+            item.state = preset == selected ? .on : .off
+            item.image = NSImage(systemSymbolName: preset.symbol, accessibilityDescription: nil)
             menu.addItem(item)
         }
         menu.addItem(.separator())
         let open = NSMenuItem(title: "Open Fan App", action: #selector(openPopoverFromMenu), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
+        let quit = NSMenuItem(title: "Quit Fan App", action: #selector(quitFromMenu), keyEquivalent: "q")
+        quit.target = self
+        menu.addItem(quit)
         statusItem?.menu = menu
         button.performClick(nil)
         statusItem?.menu = nil
@@ -201,6 +224,16 @@ class StatusBarManager: ObservableObject {
 
     @objc private func openPopoverFromMenu() {
         showPopover()
+    }
+
+    @objc private func quitFromMenu() {
+        NSApp.terminate(nil)
+    }
+
+    /// Drop the SwiftUI content when the popover closes: it costs nothing while closed and
+    /// always reopens on the dashboard.
+    func popoverDidClose(_ notification: Notification) {
+        popover?.contentViewController = nil
     }
 
     func showPopover() {
@@ -220,8 +253,8 @@ class StatusBarManager: ObservableObject {
         // data arrives and profile controls change their intrinsic height.
         controller.sizingOptions = [.preferredContentSize]
         controller.view.layoutSubtreeIfNeeded()
-        let fittedHeight = max(320, ceil(controller.view.fittingSize.height))
-        controller.preferredContentSize = NSSize(width: 380, height: fittedHeight)
+        let fittedHeight = max(240, ceil(controller.view.fittingSize.height))
+        controller.preferredContentSize = NSSize(width: 320, height: fittedHeight)
         popover.contentSize = controller.preferredContentSize
         popover.contentViewController = controller
     }

@@ -1,659 +1,441 @@
+//
+//  PopoverView.swift
+//  fan
+//
+//  The menu-bar popover. Same structure and look as Claude Usage: a compact header,
+//  twin gauge cards, glass cards for the controls and a teal action card.
+//
+
 import SwiftUI
 import AppKit
 
 struct PopoverView: View {
     @ObservedObject var viewModel: FanControlViewModel
-    @ObservedObject var permissions = PermissionsManager.shared
-    @ObservedObject var battery = BatteryMonitor.shared
-    var statusBarManager: StatusBarManager?
+    @ObservedObject var settings: FanSettings
+    @ObservedObject var controller: FanController
+    @ObservedObject private var permissions = PermissionsManager.shared
+    @ObservedObject private var battery = BatteryMonitor.shared
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var showingQuitConfirm = false
     @State private var showingSettings = false
-    @State private var installError: String?
-
-    private let accent = Color(red: 0.91, green: 0.67, blue: 0.25)
 
     var body: some View {
-        Group {
+        ZStack {
             if showingSettings {
-                SettingsView(viewModel: viewModel) {
-                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
-                        showingSettings = false
-                    }
-                }
-                .transition(.opacity)
+                SettingsView(viewModel: viewModel, settings: settings,
+                             back: { withAnimation(.snappy) { showingSettings = false } })
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             } else {
-                VStack(spacing: 0) {
-                    header
-
-                    if !permissions.isHelperInstalled {
-                        setupState
-                    } else if !viewModel.hasAccess {
-                        accessState
-                    } else if viewModel.cpuTemperature == nil {
-                        loadingState
-                    } else {
-                        dashboard
-                    }
-                }
-                .transition(.opacity)
+                DashboardView(viewModel: viewModel, settings: settings, controller: controller,
+                              permissions: permissions, battery: battery,
+                              openSettings: { withAnimation(.snappy) { showingSettings = true } })
+                    .transition(.move(edge: .leading).combined(with: .opacity))
             }
         }
-        .frame(width: 380)
+        .padding(14)
+        .frame(width: 320)
         .fixedSize(horizontal: false, vertical: true)
-        .background(background)
+        .font(.system(size: 12))
+        .monospacedDigit()
         .onAppear {
             if !viewModel.isMonitoring { viewModel.startMonitoring() }
             battery.startMonitoring()
         }
         .onDisappear {
-            if viewModel.statusBarDisplayMode != "power" { battery.stopMonitoring() }
+            if settings.menuBarDisplay != .power { battery.stopMonitoring() }
         }
-        .alert("Quit Fan App?", isPresented: $showingQuitConfirm) {
-            Button("Cancel", role: .cancel) { }
-            Button("Quit", role: .destructive) { quitApp() }
-        } message: {
-            Text("System fan control will be restored before the app closes.")
+    }
+}
+
+// MARK: - Dashboard
+
+private struct DashboardView: View {
+    @ObservedObject var viewModel: FanControlViewModel
+    @ObservedObject var settings: FanSettings
+    @ObservedObject var controller: FanController
+    @ObservedObject var permissions: PermissionsManager
+    @ObservedObject var battery: BatteryMonitor
+    let openSettings: () -> Void
+
+    @Environment(\.colorScheme) private var scheme
+    @State private var hovered: String?
+    @State private var installError: String?
+
+    private var sub: Color { Palette.sub(scheme) }
+    private var hottest: Double? { viewModel.getMaxTemperature() > 0 ? viewModel.getMaxTemperature() : nil }
+    private var tempColors: [Color] { Palette.temperature(hottest) }
+    private var tempFraction: Double { hottest.map { max(0.04, min(1, ($0 - 30) / 70)) } ?? 0 }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            header
+            if !permissions.isHelperInstalled {
+                setupCard
+            } else if !viewModel.hasAccess {
+                stateCard(symbol: "lock.trianglebadge.exclamationmark.fill", colors: Palette.warm,
+                          title: "System access needed",
+                          message: viewModel.lastError ?? "Fan App can’t read the thermal sensors yet.")
+            } else if viewModel.cpuTemperature == nil {
+                stateCard(symbol: "waveform.path.ecg", colors: Palette.fan,
+                          title: "Reading your Mac", message: "The first reading can take a moment.")
+            } else {
+                GlassEffectContainer(spacing: 12) {
+                    VStack(spacing: 12) {
+                        HStack(spacing: 10) {
+                            temperatureGauge
+                            fanGauge
+                        }
+                        if viewModel.thermalHistory.count >= 3 { trendCard }
+                        coolingCard
+                        if settings.mode != .maximum { boostCard }
+                    }
+                }
+            }
+            footer
         }
     }
 
-    private var background: some View {
-        ZStack {
-            Color.clear
-            LinearGradient(
-                colors: [accent.opacity(0.045), .clear, temperatureColor.opacity(0.025)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            Circle()
-                .fill(temperatureColor.opacity(0.045))
-                .frame(width: 240, height: 240)
-                .blur(radius: 48)
-                .offset(x: 145, y: -210)
-        }
-    }
+    // MARK: Header
 
     private var header: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .fill(accent.opacity(0.16))
-                Image(systemName: "fan.fill")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(accent)
-                    .rotationEffect(.degrees(viewModel.currentFanSpeed > 0 ? 12 : 0))
-                    .animation(reduceMotion ? nil : .spring(response: 0.45), value: viewModel.currentFanSpeed)
-            }
-            .frame(width: 36, height: 36)
-            .glassEffect(.clear.tint(accent.opacity(0.08)), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Fan App")
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
-                    .tracking(-0.5)
-                Text(headerSubtitle)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary)
-            }
-
+        HStack(spacing: 8) {
+            Ring(value: tempFraction, colors: tempColors, lineWidth: 2.6)
+                .frame(width: 15, height: 15)
+            Text("Fan App").font(.system(size: 13, weight: .semibold))
             Spacer()
-
-            Button {
-                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
-                    showingSettings = true
-                }
-            } label: {
-                Image(systemName: "slider.horizontal.3")
-                    .frame(width: 26, height: 26)
-            }
-            .buttonStyle(PopoverGlassButtonStyle())
-            .help("Settings")
-
-            Button { showingQuitConfirm = true } label: {
-                Image(systemName: "power")
-                    .frame(width: 26, height: 26)
-            }
-            .buttonStyle(PopoverGlassButtonStyle())
-            .help("Quit Fan App")
+            RoundIconButton(symbol: "gearshape", label: "Settings", action: openSettings)
         }
-        .padding(.horizontal, 18)
-        .padding(.top, 16)
-        .padding(.bottom, 14)
+        .frame(height: 28)
+        .padding(.horizontal, 2)
     }
 
-    private var dashboard: some View {
-        GlassEffectContainer(spacing: 14) {
-            VStack(spacing: 14) {
-                hero
-                presetStrip
-                controlPanel
+    // MARK: Gauges
+
+    private var temperatureGauge: some View {
+        let cpu = viewModel.cpuTemperature, gpu = viewModel.gpuTemperature
+        let source = (gpu ?? 0) > (cpu ?? 0) ? "GPU" : "CPU"
+        let detail: String = {
+            if hovered == "temp" {
+                return [cpu.map { "CPU \(Int($0.rounded()))°" }, gpu.map { "GPU \(Int($0.rounded()))°" }]
+                    .compactMap { $0 }.joined(separator: " · ")
             }
-        }
-        .padding(.horizontal, 18)
-        .padding(.bottom, 14)
+            return temperatureStatus
+        }()
+        return gauge(id: "temp", value: tempFraction, colors: tempColors,
+                     big: hottest.map { "\(Int($0.rounded()))" } ?? "–", unit: "°", small: source,
+                     title: "Temperature", detail: detail)
     }
 
-    private var hero: some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .center, spacing: 16) {
-                TemperatureDial(
-                    temperature: viewModel.cpuTemperature,
-                    color: temperatureColor,
-                    status: temperatureStatus
-                )
+    private var fanGauge: some View {
+        let rpm = viewModel.currentFanSpeed
+        let detail: String = {
+            if hovered == "fan", controller.targetSpeed > 0 { return "Target \(controller.targetSpeed.formatted()) RPM" }
+            return rpm > 0 ? "\(rpm.formatted()) RPM" : "Fans resting"
+        }()
+        return gauge(id: "fan", value: viewModel.fanFraction, colors: Palette.fan,
+                     big: "\(viewModel.fanPercent)", unit: "%", small: "speed",
+                     title: viewModel.numberOfFans == 1 ? "Fan" : "Fans", detail: detail)
+    }
 
-                VStack(alignment: .leading, spacing: 13) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("FAN SPEED")
-                            .font(.system(size: 9, weight: .semibold))
-                            .tracking(1.25)
-                            .foregroundStyle(.secondary)
-                        HStack(alignment: .firstTextBaseline, spacing: 5) {
-                            Text(viewModel.currentFanSpeed.formatted())
-                                .font(.system(size: 29, weight: .bold, design: .rounded))
-                                .monospacedDigit()
-                            Text("RPM")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                        }
+    private func gauge(id: String, value: Double, colors: [Color], big: String, unit: String,
+                       small: String, title: String, detail: String) -> some View {
+        VStack(spacing: 5) {
+            ZStack {
+                Ring(value: value, colors: colors, lineWidth: 9)
+                VStack(spacing: 1) {
+                    HStack(alignment: .firstTextBaseline, spacing: 0) {
+                        Text(big).font(.system(size: 23, weight: .bold, design: .rounded))
+                        Text(unit).font(.system(size: 12, weight: .semibold)).foregroundStyle(sub)
                     }
-
-                    FanBar(progress: fanProgress, accent: accent)
-
-                    HStack(spacing: 8) {
-                        MetricChip(icon: "bolt.fill", value: powerText, label: "power")
-                        MetricChip(icon: "fan.fill", value: "\(viewModel.numberOfFans)", label: viewModel.numberOfFans == 1 ? "fan" : "fans")
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(16)
-        }
-        .liquidGlass(cornerRadius: 24, tint: temperatureColor.opacity(0.035))
-    }
-
-    private var presetStrip: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack {
-                Text("PROFILE")
-                    .font(.system(size: 9, weight: .semibold))
-                    .tracking(1.25)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text(profileDescription)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary)
-            }
-
-            HStack(spacing: 7) {
-                ForEach(FanPreset.selectableCases) { preset in
-                    PresetButton(
-                        preset: preset,
-                        isSelected: viewModel.activePreset == preset,
-                        accent: accent
-                    ) {
-                        withAnimation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.8)) {
-                            viewModel.applyPreset(preset)
-                        }
-                    }
+                    Text(small).font(.system(size: 10)).foregroundStyle(sub)
                 }
             }
+            .frame(width: 88, height: 88)
+            Text(title).font(.system(size: 12, weight: .semibold))
+            Text(detail)
+                .font(.system(size: 11)).foregroundStyle(sub)
+                .lineLimit(1).minimumScaleFactor(0.8)
+                .contentTransition(.numericText())
         }
-    }
-
-    private var controlPanel: some View {
-        VStack(spacing: 14) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(viewModel.controlMode == .automatic ? "Smart control" : "Manual control")
-                        .font(.system(size: 13, weight: .semibold))
-                    Text(viewModel.controlMode == .automatic ? "Responds to heat automatically" : "Hold one fixed fan speed")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Picker("Mode", selection: Binding(
-                    get: { viewModel.controlMode },
-                    set: { viewModel.setControlMode($0) }
-                )) {
-                    Text("Manual").tag(ControlMode.manual)
-                    Text("Smart").tag(ControlMode.automatic)
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 126)
-            }
-
-            if viewModel.controlMode == .automatic {
-                autoControls
-            } else {
-                manualControls
-            }
-
-            HStack(spacing: 10) {
-                if viewModel.boostEndDate == nil {
-                    Button { viewModel.startBoost() } label: {
-                        Label("10 min boost", systemImage: "wind")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(AccentButtonStyle(accent: accent))
-                } else {
-                    Button { viewModel.stopBoost() } label: {
-                        Label("Stop boost", systemImage: "stop.fill")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(AccentButtonStyle(accent: accent))
-                }
-
-                Button { viewModel.applyPreset(.system) } label: {
-                    Label("Give back to macOS", systemImage: "arrow.uturn.backward")
-                }
-                .buttonStyle(PopoverGlassButtonStyle(cornerRadius: 9))
-                .controlSize(.large)
-            }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 12).padding(.bottom, 10).padding(.horizontal, 6)
+        .card(radius: 20)
+        .onHover { inside in
+            if inside { hovered = id } else if hovered == id { hovered = nil }
         }
-        .padding(15)
-        .liquidGlass(cornerRadius: 20, tint: accent.opacity(0.02))
-    }
-
-    private var manualControls: some View {
-        VStack(spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Target speed")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text("\(viewModel.manualSpeed.formatted()) RPM")
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-            }
-            Slider(
-                value: Binding(
-                    get: { Double(viewModel.manualSpeed) },
-                    set: { viewModel.setManualSpeed(Int($0)) }
-                ),
-                in: 1_000...6_500,
-                step: 100
-            )
-            .tint(accent)
-        }
-    }
-
-    private var autoControls: some View {
-        HStack(spacing: 10) {
-            CompactControl(
-                label: "START COOLING",
-                value: String(format: "%.0f°", viewModel.autoThreshold),
-                icon: "thermometer.medium",
-                accent: accent
-            ) {
-                Slider(
-                    value: Binding(
-                        get: { viewModel.autoThreshold },
-                        set: { viewModel.setAutoThreshold($0) }
-                    ),
-                    in: 40...90,
-                    step: 5
-                )
-                .tint(accent)
-            }
-
-            CompactControl(
-                label: "RESPONSE",
-                value: responseLabel,
-                icon: "dial.medium",
-                accent: accent
-            ) {
-                Slider(
-                    value: Binding(
-                        get: { viewModel.autoAggressiveness },
-                        set: { viewModel.setAutoAggressiveness($0) }
-                    ),
-                    in: 0...3,
-                    step: 0.1
-                )
-                .tint(accent)
-            }
-        }
-    }
-
-    private var setupState: some View {
-        StatePanel(
-            icon: "wrench.and.screwdriver.fill",
-            title: "One quick setup",
-            message: "Install the helper so fan can safely adjust cooling without asking for your password each time.",
-            accent: accent,
-            error: installError,
-            actionTitle: "Install helper"
-        ) {
-            installError = nil
-            permissions.installHelper { success, error in
-                if !success { installError = error ?? "The helper could not be installed." }
-            }
-        }
-    }
-
-    private var accessState: some View {
-        StatePanel(
-            icon: "lock.trianglebadge.exclamationmark.fill",
-            title: "System access needed",
-            message: viewModel.lastError ?? "fan cannot read the Mac's thermal sensors yet.",
-            accent: .orange,
-            error: nil,
-            actionTitle: nil,
-            action: nil
-        )
-    }
-
-    private var loadingState: some View {
-        StatePanel(
-            icon: "waveform.path.ecg",
-            title: "Reading your Mac",
-            message: "The first thermal reading can take a moment.",
-            accent: accent,
-            error: nil,
-            actionTitle: nil,
-            action: nil
-        )
-    }
-
-    private var temperatureColor: Color {
-        guard let temp = viewModel.cpuTemperature else { return .secondary }
-        if temp < 55 { return Color(red: 0.35, green: 0.72, blue: 0.67) }
-        if temp < 75 { return accent }
-        return Color(red: 0.91, green: 0.38, blue: 0.29)
     }
 
     private var temperatureStatus: String {
-        guard let temp = viewModel.cpuTemperature else { return "Reading" }
-        if temp < 55 { return "Cool" }
-        if temp < 75 { return "Comfortable" }
-        if temp < 88 { return "Running warm" }
-        return "High heat"
+        guard let t = hottest else { return "Reading" }
+        if t < 55 { return "Cool" }
+        if t < 70 { return "Comfortable" }
+        if t < 85 { return "Running warm" }
+        return "Running hot"
     }
 
-    private var headerSubtitle: String {
-        viewModel.controlMode == .automatic ? "Smart cooling active" : "Manual cooling active"
+    // MARK: Trend
+
+    private var trendCard: some View {
+        let temps = viewModel.thermalHistory.map(\.temperature)
+        let lo = Int((temps.min() ?? 0).rounded()), hi = Int((temps.max() ?? 0).rounded())
+        let minutes = max(1, Int((viewModel.thermalHistory.last?.date.timeIntervalSince(viewModel.thermalHistory.first?.date ?? .now) ?? 60) / 60))
+        return VStack(spacing: 8) {
+            HStack {
+                SectionLabel("Last \(minutes) min")
+                Spacer()
+                Text(lo == hi ? "\(lo)°" : "\(lo)–\(hi)°").font(.system(size: 10, weight: .semibold)).foregroundStyle(sub)
+            }
+            Sparkline(values: temps, colors: tempColors)
+                .frame(height: 30)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 11)
+        .card()
     }
 
-    private var fanProgress: Double {
-        max(0, min(1, Double(viewModel.currentFanSpeed - 1_000) / 5_500))
+    // MARK: Cooling
+
+    private var modeBinding: Binding<ControlMode> {
+        Binding(get: { settings.mode }, set: { controller.setMode($0) })
     }
 
-    private var powerText: String {
-        battery.batteryInfo.powerWatts.map { String(format: "%.1fW", $0) } ?? "--W"
+    private var coolingCard: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            HStack {
+                SectionLabel("Cooling")
+                Spacer()
+                status
+            }
+            GlassSegmented(options: ControlMode.allCases, selection: modeBinding,
+                           label: { $0.label }, symbol: { $0.symbol })
+
+            Group {
+                switch settings.mode {
+                case .system:
+                    note(settings.autoSwitchWhenHot
+                         ? "macOS manages the fans. Fan App steps in with Smart above \(Int(settings.highTempAlert))°."
+                         : "macOS manages the fans. Fan App just watches the sensors.")
+                case .automatic:
+                    smartControls
+                case .manual:
+                    sliderRow("Speed", value: "\(settings.manualSpeed.formatted()) RPM",
+                              binding: Binding(get: { Double(settings.manualSpeed) },
+                                               set: { settings.setManualSpeed(Int($0)) }),
+                              range: 1000...6500, step: 100)
+                case .maximum:
+                    note("Every fan at full speed, \(FanSettings.maxRPM.formatted()) RPM.")
+                }
+            }
+            .transition(.opacity)
+        }
+        .padding(12)
+        .card(radius: 20)
+        .animation(.snappy(duration: 0.25), value: settings.mode)
     }
 
-    private var profileDescription: String {
-        switch viewModel.activePreset {
-        case .system: return "macOS decides"
-        case .quiet: return "lower noise"
-        case .balanced: return "everyday cooling"
-        case .performance: return "earlier response"
-        case .maximum: return "full speed"
-        case .custom: return "custom settings"
+    @ViewBuilder private var status: some View {
+        let (text, color): (String, Color) = {
+            if !controller.lastWriteSuccess, controller.statusMessage.hasPrefix("Couldn") {
+                return (controller.statusMessage, Palette.alert(scheme))
+            }
+            switch controller.activeOverride {
+            case .boost: return ("Boosting", Palette.amber(scheme))
+            case .emergency: return ("Emergency · full speed", Palette.alert(scheme))
+            case .hot: return ("Hot · Smart until cooler", Palette.amber(scheme))
+            case .none: break
+            }
+            switch settings.mode {
+            case .system: return ("macOS in control", sub)
+            case .maximum: return ("Full speed", sub)
+            case .manual: return ("Holding speed", Palette.good(scheme))
+            case .automatic:
+                if let t = hottest, t <= settings.autoThreshold { return ("Below \(Int(settings.autoThreshold))° · resting", Palette.good(scheme)) }
+                return (controller.targetSpeed > 0 ? "Target \(controller.targetSpeed.formatted()) RPM" : "Smart", Palette.good(scheme))
+            }
+        }()
+        Text(text).font(.system(size: 11, weight: .semibold)).foregroundStyle(color).lineLimit(1)
+    }
+
+    private var smartControls: some View {
+        VStack(spacing: 9) {
+            HStack(spacing: 5) {
+                ForEach(FanPreset.smartCases + [.custom]) { p in profileChip(p) }
+            }
+            sliderRow("Start at", value: "\(Int(settings.autoThreshold))°",
+                      binding: Binding(get: { settings.autoThreshold }, set: { settings.setThreshold($0) }),
+                      range: 40...90, step: 1)
+            sliderRow("Response", value: responseLabel,
+                      binding: Binding(get: { settings.autoAggressiveness }, set: { settings.setResponse($0) }),
+                      range: 0...3, step: 0.1)
+            sliderRow("Top speed", value: "\(settings.autoMaxSpeed.formatted())",
+                      binding: Binding(get: { Double(settings.autoMaxSpeed) }, set: { settings.setTopSpeed(Int($0)) }),
+                      range: 2000...6500, step: 100)
         }
     }
 
+    private func profileChip(_ p: FanPreset) -> some View {
+        let on = settings.smartProfile == p
+        return Button {
+            withAnimation(.snappy(duration: 0.25)) { controller.choose(p) }
+        } label: {
+            Text(p == .performance ? "Perform." : p.rawValue)
+                .font(.system(size: 11, weight: .semibold))
+                .lineLimit(1)
+                .foregroundStyle(on ? Color.white : Color.primary.opacity(0.8))
+                .frame(maxWidth: .infinity)
+                .frame(height: 24)
+                .background {
+                    if on {
+                        Capsule().fill(LinearGradient(colors: Palette.fan, startPoint: .topLeading, endPoint: .bottomTrailing))
+                    }
+                }
+                .glassEffect(on ? .clear : .regular.interactive(), in: Capsule())
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(p == .custom ? "Your own start, response and top speed" : "Smart · \(p.rawValue)")
+        .accessibilityAddTraits(on ? .isSelected : [])
+    }
+
+    private func sliderRow(_ label: String, value: String, binding: Binding<Double>,
+                           range: ClosedRange<Double>, step: Double) -> some View {
+        HStack(spacing: 8) {
+            Text(label).foregroundStyle(sub).frame(width: 62, alignment: .leading)
+            Slider(value: binding, in: range, step: step)
+                .controlSize(.small)
+                .tint(Palette.accent)
+            Text(value).font(.system(size: 11, weight: .semibold))
+                .frame(width: 68, alignment: .trailing)
+                .contentTransition(.numericText())
+        }
+        .font(.system(size: 11))
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text).font(.system(size: 11)).foregroundStyle(sub)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 2)
+    }
+
     private var responseLabel: String {
-        switch viewModel.autoAggressiveness {
+        switch settings.autoAggressiveness {
         case ..<0.7: return "Gentle"
         case ..<1.3: return "Quiet"
         case ..<1.9: return "Balanced"
         case ..<2.5: return "Fast"
-        default: return "Maximum"
+        default: return "Strongest"
         }
     }
 
-    private func quitApp() {
-        viewModel.resetToSystemControl()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-            NSApplication.shared.terminate(nil)
-        }
-    }
-}
+    // MARK: Boost
 
-private struct TemperatureDial: View {
-    let temperature: Double?
-    let color: Color
-    let status: String
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private var progress: Double {
-        guard let temperature else { return 0 }
-        return max(0.05, min(1, (temperature - 30) / 70))
-    }
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .stroke(Color.primary.opacity(0.08), lineWidth: 7)
-            Circle()
-                .trim(from: 0, to: progress)
-                .stroke(color, style: StrokeStyle(lineWidth: 7, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-                .shadow(color: color.opacity(0.25), radius: 7)
-
-            VStack(spacing: 1) {
-                HStack(alignment: .top, spacing: 0) {
-                    Text(temperature.map { String(format: "%.0f", $0) } ?? "--")
-                        .font(.system(size: 38, weight: .bold, design: .rounded))
-                        .tracking(-1.5)
-                        .monospacedDigit()
-                    Text("°")
-                        .font(.system(size: 17, weight: .bold, design: .rounded))
-                        .padding(.top, 4)
+    private var boostCard: some View {
+        let active = controller.boostEndDate != nil
+        return HStack(spacing: 12) {
+            Image(systemName: "wind")
+                .font(.system(size: 15, weight: .bold))
+                .symbolEffect(.pulse, options: .repeating, isActive: active)
+                .frame(width: 34, height: 34)
+                .background(Circle().fill(Color.white.opacity(0.18)))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(active ? "Boosting" : "Boost").font(.system(size: 15, weight: .bold))
+                if let end = controller.boostEndDate {
+                    TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                        Text("\(countdown(end, now: ctx.date)) left · then \(settings.mode.label)")
+                            .font(.system(size: 11)).opacity(0.9).lineLimit(1)
+                    }
+                } else {
+                    Text("10 min at full speed").font(.system(size: 11)).opacity(0.9).lineLimit(1)
                 }
-                Text(status)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(color)
             }
-        }
-        .frame(width: 122, height: 122)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.35), value: progress)
-    }
-}
-
-private struct FanBar: View {
-    let progress: Double
-    let accent: Color
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        GeometryReader { proxy in
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.primary.opacity(0.09))
-                Capsule()
-                    .fill(accent)
-                    .frame(width: max(5, proxy.size.width * progress))
+            Spacer(minLength: 4)
+            Button {
+                withAnimation(.snappy) { active ? controller.stopBoost() : controller.startBoost() }
+            } label: {
+                Text(active ? "Stop" : "Start")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Color(hex: 0x06604F))
+                    .padding(.horizontal, 15).frame(height: 30)
+                    .background(Capsule().fill(Color.white))
             }
+            .buttonStyle(.plain)
+            .help(active ? "Stop now and go back to your setting" : "Run every fan flat out for 10 minutes. Your setting comes back afterwards.")
         }
-        .frame(height: 5)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.35), value: progress)
-    }
-}
-
-private struct MetricChip: View {
-    let icon: String
-    let value: String
-    let label: String
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: icon).font(.system(size: 8, weight: .semibold))
-            Text(value).font(.system(size: 10, weight: .semibold, design: .rounded)).monospacedDigit()
-            Text(label).font(.system(size: 9)).foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .glassEffect(.clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
-}
-
-private struct PresetButton: View {
-    let preset: FanPreset
-    let isSelected: Bool
-    let accent: Color
-    let action: () -> Void
-
-    private var symbol: String {
-        switch preset {
-        case .system: return "apple.logo"
-        case .quiet: return "leaf.fill"
-        case .balanced: return "circle.lefthalf.filled"
-        case .performance: return "bolt.fill"
-        case .maximum: return "wind"
-        case .custom: return "slider.horizontal.3"
-        }
+        .foregroundStyle(.white)
+        .padding(.leading, 14).padding(.trailing, 12).padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(LinearGradient(colors: Palette.boost, startPoint: .topLeading, endPoint: .bottomTrailing))
+                .shadow(color: Color(hex: 0x087A67, alpha: 0.28), radius: 10, y: 6)
+        )
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Color.white.opacity(0.22), lineWidth: 1))
     }
 
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 5) {
-                Image(systemName: symbol)
-                    .font(.system(size: 12, weight: .semibold))
-                Text(preset.rawValue)
-                    .font(.system(size: 9, weight: .semibold))
-                    .lineLimit(1)
+    private func countdown(_ end: Date, now: Date) -> String {
+        let s = max(0, Int(end.timeIntervalSince(now)))
+        return s >= 60 ? "\(s / 60)m \(String(format: "%02d", s % 60))s" : "\(s)s"
+    }
+
+    // MARK: States
+
+    private var setupCard: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "wrench.and.screwdriver.fill")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(LinearGradient(colors: Palette.fan, startPoint: .topLeading, endPoint: .bottomTrailing))
+                .frame(width: 54, height: 54)
+                .glassEffect(.regular, in: Circle())
+            Text("One quick setup").font(.system(size: 14, weight: .semibold))
+            Text("Install the helper so Fan App can set fan speeds without asking for your password each time.")
+                .font(.system(size: 11)).foregroundStyle(sub).multilineTextAlignment(.center)
+            if let installError {
+                Text(installError).font(.system(size: 11)).foregroundStyle(Palette.alert(scheme)).multilineTextAlignment(.center)
             }
-            .foregroundStyle(isSelected ? Color.black.opacity(0.82) : Color.primary)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 9)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-            .background(
-                isSelected ? accent.opacity(0.86) : Color.clear,
-                in: RoundedRectangle(cornerRadius: 11, style: .continuous)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .strokeBorder(.white.opacity(isSelected ? 0.26 : 0.34), lineWidth: 0.75)
+            Button("Install helper") {
+                installError = nil
+                permissions.installHelper { ok, error in
+                    if !ok { installError = error ?? "The helper couldn’t be installed." }
+                }
             }
+            .buttonStyle(.borderedProminent)
+            .tint(Palette.accent)
+            .controlSize(.large)
         }
-        .buttonStyle(.plain)
-        .contentShape(Rectangle())
-    }
-}
-
-private struct CompactControl<Content: View>: View {
-    let label: String
-    let value: String
-    let icon: String
-    let accent: Color
-    @ViewBuilder let content: Content
-
-    init(label: String, value: String, icon: String, accent: Color, @ViewBuilder content: () -> Content) {
-        self.label = label
-        self.value = value
-        self.icon = icon
-        self.accent = accent
-        self.content = content()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Image(systemName: icon).font(.system(size: 10, weight: .semibold)).foregroundStyle(accent)
-                Text(label).font(.system(size: 8, weight: .semibold)).tracking(0.8).foregroundStyle(.secondary)
-                Spacer()
-                Text(value).font(.system(size: 10, weight: .semibold, design: .rounded))
-            }
-            content
-        }
-        .padding(10)
+        .padding(18)
         .frame(maxWidth: .infinity)
-        .glassEffect(.clear, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .card(radius: 20)
     }
-}
 
-private struct StatePanel: View {
-    let icon: String
-    let title: String
-    let message: String
-    let accent: Color
-    let error: String?
-    let actionTitle: String?
-    let action: (() -> Void)?
+    private func stateCard(symbol: String, colors: [Color], title: String, message: String) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing))
+                .frame(width: 54, height: 54)
+                .glassEffect(.regular, in: Circle())
+            Text(title).font(.system(size: 14, weight: .semibold))
+            Text(message).font(.system(size: 11)).foregroundStyle(sub).multilineTextAlignment(.center)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity)
+        .card(radius: 20)
+    }
 
-    var body: some View {
-        VStack(spacing: 13) {
-            Image(systemName: icon)
-                .font(.system(size: 27, weight: .semibold))
-                .foregroundStyle(accent)
-                .frame(width: 58, height: 58)
-                .glassEffect(.regular.tint(accent.opacity(0.18)), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            VStack(spacing: 5) {
-                Text(title).font(.system(size: 17, weight: .bold, design: .rounded))
-                Text(message)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 260)
-            }
-            if let error {
-                Text(error).font(.system(size: 10)).foregroundStyle(.red).multilineTextAlignment(.center)
-            }
-            if let actionTitle, let action {
-                Button(actionTitle, action: action)
-                    .buttonStyle(AccentButtonStyle(accent: accent))
-                    .frame(width: 170)
+    // MARK: Footer
+
+    private var footer: some View {
+        HStack(spacing: 6) {
+            let fans = viewModel.numberOfFans
+            let power = battery.batteryInfo.powerWatts.map { String(format: "%.1f W", $0) }
+            Text([fans > 0 ? "\(fans) \(fans == 1 ? "fan" : "fans")" : nil, power].compactMap { $0 }.joined(separator: " · "))
+                .foregroundStyle(sub)
+            Spacer()
+            if settings.emergencyEnabled {
+                Label("Full speed at \(Int(settings.emergencyTemperature))°", systemImage: "shield.lefthalf.filled")
+                    .foregroundStyle(sub)
+                    .help("Emergency protection: every fan goes to full speed at this temperature")
             }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 44)
-        .padding(.horizontal, 24)
+        .font(.system(size: 11))
+        .padding(.horizontal, 4)
     }
-}
-
-private struct AccentButtonStyle: ButtonStyle {
-    let accent: Color
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(Color.black.opacity(0.82))
-            .padding(.horizontal, 13)
-            .padding(.vertical, 9)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .background(
-                accent.opacity(configuration.isPressed ? 0.7 : 0.9),
-                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(.white.opacity(0.3), lineWidth: 0.75)
-            }
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
-    }
-}
-
-private struct PopoverGlassButtonStyle: ButtonStyle {
-    var cornerRadius: CGFloat = 9
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .foregroundStyle(.primary.opacity(configuration.isPressed ? 0.68 : 0.82))
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .background(
-                Color.white.opacity(configuration.isPressed ? 0.04 : 0.1),
-                in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(.white.opacity(configuration.isPressed ? 0.22 : 0.38), lineWidth: 0.75)
-            }
-            .scaleEffect(configuration.isPressed ? 0.96 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
-    }
-}
-
-#Preview {
-    PopoverView(viewModel: FanControlViewModel())
 }

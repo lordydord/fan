@@ -1,8 +1,8 @@
 //
-//  ffanApp.swift
-//  ffan
+//  fanApp.swift
+//  fan
 //
-//  AppDelegate — all UI created on demand, nothing persistent in background.
+//  Menu-bar app: a status item with a popover, nothing else.
 //
 
 import SwiftUI
@@ -12,45 +12,39 @@ import Combine
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBarManager: StatusBarManager?
     var viewModel: FanControlViewModel?
-    private var cancellables = Set<AnyCancellable>()
-    private var displayModeObserver: NSObjectProtocol?
+    private var bag = Set<AnyCancellable>()
+    private let settings = FanSettings.shared
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        setupApplication()
-    }
 
-    private func setupApplication() {
-        let viewModel = FanControlViewModel()
+        let viewModel = FanControlViewModel(settings: settings)
         self.viewModel = viewModel
 
         let statusBarManager = StatusBarManager()
         self.statusBarManager = statusBarManager
         statusBarManager.setupStatusBar()
 
-        let initialMode = UserDefaults.standard.string(forKey: "statusBarDisplayMode") ?? "temperature"
-        statusBarManager.setDisplayMode(initialMode)
-        configureBatteryMonitoring(for: initialMode)
-
-        displayModeObserver = NotificationCenter.default.addObserver(
-            forName: NSNotification.Name("StatusBarDisplayModeChanged"),
-            object: nil, queue: .main
-        ) { [weak self, weak statusBarManager] notification in
-            if let mode = notification.object as? String {
-                statusBarManager?.setDisplayMode(mode)
-                self?.configureBatteryMonitoring(for: mode)
-            }
-        }
-
         statusBarManager.setPopoverContentBuilder { [weak self] in
-            guard let self = self, let vm = self.viewModel, let sm = self.statusBarManager else {
-                return AnyView(EmptyView())
-            }
-            return AnyView(PopoverView(viewModel: vm, statusBarManager: sm))
+            guard let self, let vm = self.viewModel else { return AnyView(EmptyView()) }
+            return AnyView(PopoverView(viewModel: vm, settings: self.settings, controller: vm.fanController))
         }
         statusBarManager.setQuickActionHandler { [weak viewModel] preset in
             viewModel?.applyPreset(preset)
         }
+        statusBarManager.setSelectedPresetProvider { [weak self] in
+            self?.settings.selectedPreset
+        }
+
+        settings.$menuBarDisplay
+            .removeDuplicates()
+            .sink { [weak self, weak statusBarManager] mode in
+                statusBarManager?.setDisplayMode(mode.rawValue)
+                self?.configureBatteryMonitoring(for: mode)
+            }
+            .store(in: &bag)
+
+        LaunchAtLoginManager.shared.ensureRegistered(wanted: settings.launchAtLogin)
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             self?.initializeMonitoring()
@@ -58,45 +52,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func initializeMonitoring() {
-        guard let viewModel = viewModel else { return }
+        guard let viewModel else { return }
         viewModel.startMonitoring()
+
         Publishers.CombineLatest3(viewModel.$cpuTemperature, viewModel.$gpuTemperature, viewModel.$currentFanSpeed)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _, _, _ in self?.updateStatusBarIcon() }
-            .store(in: &cancellables)
+            .store(in: &bag)
+
         BatteryMonitor.shared.$batteryInfo
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.updateStatusBarIcon() }
-            .store(in: &cancellables)
+            .store(in: &bag)
     }
 
-    private func configureBatteryMonitoring(for mode: String) {
-        if mode == "power" { BatteryMonitor.shared.startMonitoring() }
+    private func configureBatteryMonitoring(for mode: MenuBarDisplay) {
+        if mode == .power { BatteryMonitor.shared.startMonitoring() }
         else { BatteryMonitor.shared.stopMonitoring() }
     }
 
     private func updateStatusBarIcon() {
-        guard let viewModel = viewModel, let statusBarManager = statusBarManager else { return }
+        guard let viewModel, let statusBarManager else { return }
         let maxTemp = viewModel.getMaxTemperature()
-        let fanSpeed = viewModel.currentFanSpeed
-        let power = BatteryMonitor.shared.batteryInfo.powerWatts
-        statusBarManager.updateIcon(fanSpeed: fanSpeed,
+        statusBarManager.updateIcon(fanSpeed: viewModel.currentFanSpeed,
                                     temperature: maxTemp > 0 ? maxTemp : nil,
-                                    powerWatts: power)
+                                    powerWatts: BatteryMonitor.shared.batteryInfo.powerWatts)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        cancellables.removeAll()
+        bag.removeAll()
         BatteryMonitor.shared.stopMonitoring()
+        viewModel?.resetToSystemControl()
         viewModel?.stopMonitoring()
-        [displayModeObserver].compactMap { $0 }.forEach {
-            NotificationCenter.default.removeObserver($0)
-        }
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        return false
-    }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         statusBarManager?.showPopover()
@@ -104,18 +94,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-// Minimal SwiftUI App wrapper — Settings scene uses an NSViewRepresentable
-// empty placeholder so SwiftUI has no render loop of its own
 @main
 struct FanApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+
     var body: some Scene {
         Settings { _NoOpView() }
     }
 }
 
-// A true no-op NSView with zero size — gives SwiftUI's Settings scene
-// something to host without triggering any layout or render work
+/// A zero-size view so SwiftUI's Settings scene has something to host without a render loop.
 private struct _NoOpView: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         let v = NSView(frame: .zero)
